@@ -1,6 +1,6 @@
 # Sam Os - A 64-bit Kernel with UEFI Bootloader
 
-A from-scratch x86_64 kernel built with a custom UEFI bootloader, ELF loader, Virtual Memory, Basic Graphics
+A from-scratch x86_64 kernel built with a custom UEFI bootloader, ELF loader, Virtual Memory, Basic Graphics.
 
 ## Concepts learnt:
 - UEFI boot process
