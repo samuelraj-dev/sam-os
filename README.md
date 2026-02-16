@@ -1,4 +1,4 @@
-# Sam Os - A 64-bit Kernel with UEFI Bootloader
+# Sam OS - A 64-bit Kernel with UEFI Bootloader
 
 A from-scratch x86_64 kernel built with a custom UEFI bootloader, ELF loader, Virtual Memory, Basic Graphics.
 
