@@ -12,6 +12,14 @@ A from-scratch x86_64 kernel built with a custom UEFI bootloader, ELF loader, Vi
 - GOP & Framebuffer graphics
 - CPUID
 - CMOS
+- Physical Memory Management (PMM)
+- Global Descriptor Table (GDT)
+- Task State Segment (TSS)
+- Interrupt Descriptor Table (IDT)
+- Interrupt Service Routine (ISR)
+- Programmable Interrupt Controller (PIC)
+- Timers
+- Keyboard & PS/2 controller
 
 ## Build Requirements
 
