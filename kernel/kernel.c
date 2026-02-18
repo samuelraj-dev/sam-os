@@ -1,58 +1,23 @@
-// typedef unsigned char uint8_t;
-// typedef unsigned short uint16_t;
-// typedef unsigned int uint32_t;
-// typedef unsigned long long uint64_t;
-
-// typedef struct {
-//     void* framebuffer;
-//     uint32_t width;
-//     uint32_t height;
-//     uint32_t pixels_per_scanline;
-//     void* memory_map;
-//     uint64_t memory_map_size;
-//     uint64_t memory_map_descriptor_size;
-// } BootInfo;
-
-// void kernel_main(BootInfo* bootInfo)
-// {
-//     if (!bootInfo || !bootInfo->framebuffer)
-//         goto halt;
-
-//     uint32_t* fb = (uint32_t*)bootInfo->framebuffer;
-//     uint32_t width = bootInfo->width;
-//     uint32_t height = bootInfo->height;
-//     uint32_t pitch = bootInfo->pixels_per_scanline;
-
-//     // Fill screen with dark gray
-//     for (uint32_t y = 0; y < height; y++) {
-//         for (uint32_t x = 0; x < width; x++) {
-//             fb[y * pitch + x] = 0x00303030;
-//         }
-//     }
-
-//     // Draw red rectangle in center
-//     uint32_t rect_w = 300;
-//     uint32_t rect_h = 200;
-//     uint32_t start_x = (width - rect_w) / 2;
-//     uint32_t start_y = (height - rect_h) / 2;
-
-//     for (uint32_t y = 0; y < rect_h; y++) {
-//         for (uint32_t x = 0; x < rect_w; x++) {
-//             fb[(start_y + y) * pitch + (start_x + x)] = 0x00FF0000;
-//         }
-//     }
-
-// halt:
-//     while (1) {
-//         __asm__ volatile ("hlt");
-//     }
-// }
-#include "font8x8_basic.h"
+// #include "font8x8_basic.h"
+#include "display.h"
 #include "bootinfo.h"
-#include "types.h"
-
+#include "gdt.h"
+#include "tss.h"
+#include "idt.h"
+#include "pic.h"
+#include "timer.h"
+#include "keyboard.h"
 #include "paging.h"
 #include "pmm.h"
+
+#include "types.h"
+
+static uint32_t* fb;
+static uint32_t  screen_w, screen_h, pitch;
+static uint32_t  cursor_x = 0;
+static uint32_t  cursor_y = 0;
+static uint32_t  fg_color = 0x00FFFFFF;
+static uint32_t  bg_color = 0x00303030;
 
 // ==================== BASIC IO PORT ====================
 static inline uint8_t inb(uint16_t port) {
@@ -63,79 +28,6 @@ static inline uint8_t inb(uint16_t port) {
 
 static inline void outb(uint16_t port, uint8_t value) {
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-// uint8_t font8x8_basic[128][8];
-
-static uint32_t* fb;
-static uint32_t screen_w, screen_h, pitch;
-static uint32_t cursor_x = 0;
-static uint32_t cursor_y = 0;
-static uint32_t fg_color = 0x00FFFFFF;
-static uint32_t bg_color = 0x00303030;
-
-void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
-    fb[y * pitch + x] = color;
-}
-
-void draw_char(char c, uint32_t x, uint32_t y) {
-    // uint8_t* glyph = font8x8_basic[(uint8_t)c];
-    unsigned char* glyph = font8x8_basic[(uint8_t)c];
-
-    for (int row = 0; row < 8; row++) {
-        for (int col = 0; col < 8; col++) {
-            if (glyph[row] & (1 << col))
-                put_pixel(x + col, y + row, fg_color);
-            else
-                put_pixel(x + col, y + row, bg_color);
-        }
-    }
-}
-
-void print_char(char c) {
-    if (c == '\n') {
-        cursor_x = 0;
-        cursor_y += 10;
-        return;
-    }
-
-    draw_char(c, cursor_x, cursor_y);
-    cursor_x += 8;
-
-    if (cursor_x + 8 >= screen_w) {
-        cursor_x = 0;
-        cursor_y += 10;
-    }
-}
-
-void print(const char* str) {
-    while (*str)
-        print_char(*str++);
-}
-
-void print_hex(uint64_t val) {
-    char hex[] = "0123456789ABCDEF";
-    print("0x");
-    for (int i = 60; i >= 0; i -= 4)
-        print_char(hex[(val >> i) & 0xF]);
-}
-
-void print_dec(uint64_t val) {
-    char buf[32];
-    int i = 0;
-
-    if (val == 0) {
-        print("0");
-        return;
-    }
-
-    while (val > 0) {
-        buf[i++] = '0' + (val % 10);
-        val /= 10;
-    }
-
-    for (int j = i - 1; j >= 0; j--)
-        print_char(buf[j]);
 }
 
 uint8_t cmos_read(uint8_t reg) {
@@ -271,18 +163,31 @@ void debug_memory_map(BootInfo* bootInfo)
 
 void kernel_main(BootInfo* bootInfo)
 {
-    
+
+    display_init(
+        (uint32_t*)bootInfo->framebuffer,
+        bootInfo->width,
+        bootInfo->height,
+        bootInfo->pixels_per_scanline
+    );
+
     fb = (uint32_t*)bootInfo->framebuffer;
     screen_w = bootInfo->width;
     screen_h = bootInfo->height;
     pitch = bootInfo->pixels_per_scanline;
 
-    // Clear screen
-    for (uint32_t y = 0; y < screen_h; y++)
-        for (uint32_t x = 0; x < screen_w; x++)
-            fb[y * pitch + x] = bg_color;
+    // clear_screen();
+
+    uint32_t* real_fb = (uint32_t*)bootInfo->framebuffer;
+    for (uint32_t y = 0; y < bootInfo->height; y++)
+        for (uint32_t x = 0; x < bootInfo->pixels_per_scanline; x++)
+            real_fb[y * bootInfo->pixels_per_scanline + x] = 0x00303030;
 
     print("SamOS Kernel\n\n");
+
+
+    print_total_ram(bootInfo);
+    print("\n");
 
     print("Memory map size: ");
     print_dec(bootInfo->memory_map_size);
@@ -292,34 +197,126 @@ void kernel_main(BootInfo* bootInfo)
     print_dec(bootInfo->memory_map_descriptor_size);
     print("\n\n");
 
-    print("Resolution: ");
-    print_dec(screen_w);
-    print("x");
-    print_dec(screen_h);
+    uint8_t* raw = (uint8_t*)bootInfo->memory_map;
+    print("raw bytes: ");
+    for (int i = 0; i < 48; i++) {
+        print_hex(raw[i]);
+        print(" ");
+    }
     print("\n");
+
+    // print("Resolution: ");
+    // print_dec(screen_w);
+    // print("x");
+    // print_dec(screen_h);
+    // print("\n");
 
     print("Framebuffer: ");
     print_hex((uint64_t)bootInfo->framebuffer);
     print("\n\n");
 
-    print_cpu_info();
+    // print_cpu_info();
+    // print("\n");
+
+    // print_time();
+    // print("\n");
+
+    print("kernel start: ");
+    print_hex((uint64_t)&_kernel_start);  // note: address-of, not value-of
     print("\n");
 
-    print_time();
+    print("kernel end: ");
+    print_hex((uint64_t)&_kernel_end);
     print("\n");
+
+    gdt_init();
+    print("\nInitialized Global Descriptor Table (GDT).\n\n");
+    tss_init();
+    print("\nInitialized Task State Segment (TSS).\n\n");
+    idt_init();
+    print("\nInitialized Interrupt Descriptor Table (IDT).\n\n");
+    pic_init();
+    print("\nInitialized Programmable Interrupt Controller (PIC).\n\n");
+    timer_init(100);
+    keyboard_init();
+
+    pic_unmask(0);
+    pic_unmask(1);
+
+    __asm__ volatile ("sti");
 
     paging_init(bootInfo);
-    
     print("\nPaging switched successfully.\n\n");
+    pmm_init(bootInfo);
+    print("\nInitialized Physical Memory Manager (PMM).\n\n");
+
+    // allocate shadow buffer — 1920*1080*4 = 8MB = 2048 pages
+    uint32_t fb_bytes = screen_h * pitch * 4;
+    uint32_t fb_pages = (fb_bytes + 4095) / 4096;
+    uint32_t* shadow = (uint32_t*)pmm_alloc_pages(fb_pages);
+    display_set_shadow(shadow);
+
+    // clear shadow to match real fb
+    for (uint32_t i = 0; i < screen_h * pitch; i++)
+        shadow[i] = 0x00303030;
+
+    display_flush();
+
+    // void* p1 = pmm_alloc_page();
+    // void* p2 = pmm_alloc_page();
+    // print("alloc1: "); print_hex((uint64_t)p1); print("\n");
+    // print("alloc2: "); print_hex((uint64_t)p2); print("\n");
+    // pmm_free_page(p1);
+    // void* p3 = pmm_alloc_page();  // should return same as p1
+    // print("alloc3: "); print_hex((uint64_t)p3); print("\n");
+
+    print("SamOS ready type something:\n");
+
+    uint64_t last = 0;
+    while (1) {
+        __asm__ volatile ("hlt");
+
+        // poll keyboard status directly
+        if (inb(0x64) & 0x01) {
+            uint8_t sc = inb(0x60);
+            if (sc == 0x00 || sc == 0xAA || sc == 0xFA) continue; // filter init noise
+            if (!(sc & 0x80) && sc < 128 && scancode_map[sc]) {
+                char str[2] = { scancode_map[sc], 0 };
+                print(str);
+            }
+        }
+
+        if (timer_flush_needed()) display_flush();       // flush in main loop, not in IRQ
+
+        uint64_t t = timer_get_ticks();
+        if (t >= last + 100) {
+            last = t;  // snap to current, don't accumulate drift
+            print("tick: ");
+            print_dec(t);
+            print("\n");
+        }
+    }
+
+    // int test_x = 1/0;
+    // *(volatile uint64_t*)0xdeadbeef = 1;
+    // *(volatile int*)0 = 0;
     
-    print_total_ram(bootInfo);
     // debug_memory_map(bootInfo);
 
 
     // pmm_init(bootInfo);
+    // print("Free pages: ");
+    // print_dec(pmm_get_free_pages());
+    // print("\n");
+
+    // void* test = pmm_alloc_page();
+
+    // print("Allocated page: ");
+    // print_hex((uint64_t)test);
+    // print("\n");
 
     // print("\nPMM initialized\n");
 
-    while (1)
-        __asm__ volatile ("hlt");
+    // while (1)
+    //     __asm__ volatile ("hlt");
 }

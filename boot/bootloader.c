@@ -399,6 +399,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         mmap_size = bootInfo->memory_map_size;
         status = SystemTable->BootServices->GetMemoryMap(&mmap_size, bootInfo->memory_map, 
                                                           &map_key, &desc_size, &desc_version);
+                                                          
+        bootInfo->memory_map_size = mmap_size; 
         if (EFI_ERROR(status)) while (1);
 
         status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);

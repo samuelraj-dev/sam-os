@@ -27,13 +27,21 @@ bootloader: boot/bootloader.c
 debug: debug/main_debug.c
 	$(CC) $(CFLAGS) debug/main_debug.c -o $(BINDIR)/debug.efi $(LDFLAGS)
 
-kernel: boot/boot.S kernel/kernel.c kernel/font8x8_basic.c kernel/pmm.c kernel/paging.c scripts/linker.ld
+kernel: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kernel/pmm.c kernel/paging.c kernel/display.c kernel/gdt.c kernel/tss.c kernel/idt.c kernel/pic.c kernel/timer.c kernel/keyboard.c scripts/linker.ld
 	$(KERNEL_AS) boot/boot.S -o $(OBJDIR)/boot.o && \
+	$(KERNEL_AS) kernel/isr.S -o $(OBJDIR)/isr.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/kernel.c -o $(OBJDIR)/kernel.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/font8x8_basic.c -o $(OBJDIR)/font8x8_basic.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/pmm.c -o $(OBJDIR)/pmm.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/paging.c -o $(OBJDIR)/paging.o && \
-	$(KERNEL_LD) $(KERNEL_LDFLAGS) $(OBJDIR)/boot.o $(OBJDIR)/kernel.o $(OBJDIR)/font8x8_basic.o $(OBJDIR)/pmm.o $(OBJDIR)/paging.o -o $(BINDIR)/kernel.elf && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/display.c -o $(OBJDIR)/display.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/gdt.c -o $(OBJDIR)/gdt.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/tss.c -o $(OBJDIR)/tss.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/idt.c -o $(OBJDIR)/idt.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/pic.c -o $(OBJDIR)/pic.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/timer.c -o $(OBJDIR)/timer.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/keyboard.c -o $(OBJDIR)/keyboard.o && \
+	$(KERNEL_LD) $(KERNEL_LDFLAGS) $(OBJDIR)/boot.o $(OBJDIR)/isr.o $(OBJDIR)/kernel.o $(OBJDIR)/font8x8_basic.o $(OBJDIR)/pmm.o $(OBJDIR)/paging.o $(OBJDIR)/display.o $(OBJDIR)/gdt.o $(OBJDIR)/tss.o $(OBJDIR)/idt.o $(OBJDIR)/pic.o $(OBJDIR)/timer.o $(OBJDIR)/keyboard.o -o $(BINDIR)/kernel.elf && \
 	mkdir -p ./target && \
 	cp $(BINDIR)/kernel.elf target/kernel.elf
 
@@ -77,22 +85,22 @@ run-debug:
 # 	sudo dd if=/dev/zero of=/dev/sda bs=1M count=10 && \
 
 to-usb:
-	sudo rm -rf /media/sam/2DA5-FCFD1/* && \
-	sudo mkdir -p /media/sam/2DA5-FCFD1/EFI/BOOT && \
-	sudo cp ./target/EFI/BOOT/BOOTX64.EFI /media/sam/2DA5-FCFD1/EFI/BOOT/ && \
-	sudo cp ./target/kernel.elf /media/sam/2DA5-FCFD1/ && \
+	sudo rm -rf /media/sam/2DA5-FCFD3/* && \
+	sudo mkdir -p /media/sam/2DA5-FCFD3/EFI/BOOT && \
+	sudo cp ./target/EFI/BOOT/BOOTX64.EFI /media/sam/2DA5-FCFD3/EFI/BOOT/ && \
+	sudo cp ./target/kernel.elf /media/sam/2DA5-FCFD3/ && \
 	sync && \
-	sudo umount /media/sam/2DA5-FCFD1
+	sudo umount /media/sam/2DA5-FCFD3
 
 to-usb-debug:
-	sudo rm -rf /media/sam/2DA5-FCFD1/* && \
-	sudo mkdir -p /media/sam/2DA5-FCFD1/EFI/BOOT && \
-	sudo cp $(BINDIR)/debug.efi /media/sam/2DA5-FCFD1/EFI/BOOT/BOOTX64.EFI && \
-	sudo cp ./target/kernel.elf /media/sam/2DA5-FCFD1/KERNEL.ELF && \
-	sudo touch /media/sam/2DA5-FCFD1/HELLO.TXT && \
-	sudo touch /media/sam/2DA5-FCFD1/hello2.txt && \
+	sudo rm -rf /media/sam/2DA5-FCFD3/* && \
+	sudo mkdir -p /media/sam/2DA5-FCFD3/EFI/BOOT && \
+	sudo cp $(BINDIR)/debug.efi /media/sam/2DA5-FCFD3/EFI/BOOT/BOOTX64.EFI && \
+	sudo cp ./target/kernel.elf /media/sam/2DA5-FCFD3/KERNEL.ELF && \
+	sudo touch /media/sam/2DA5-FCFD3/HELLO.TXT && \
+	sudo touch /media/sam/2DA5-FCFD3/hello2.txt && \
 	sync && \
-	sudo umount /media/sam/2DA5-FCFD1
+	sudo umount /media/sam/2DA5-FCFD3
 
 clean:
 	rm -f $(BINDIR)/*.elf $(BINDIR)/*.efi $(BINDIR)/*.EFI $(OBJDIR)/*.o && \
