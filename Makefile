@@ -27,11 +27,13 @@ bootloader: boot/bootloader.c
 debug: debug/main_debug.c
 	$(CC) $(CFLAGS) debug/main_debug.c -o $(BINDIR)/debug.efi $(LDFLAGS)
 
-kernel: boot/boot.S kernel/kernel.c kernel/font8x8_basic.c scripts/linker.ld
+kernel: boot/boot.S kernel/kernel.c kernel/font8x8_basic.c kernel/pmm.c kernel/paging.c scripts/linker.ld
 	$(KERNEL_AS) boot/boot.S -o $(OBJDIR)/boot.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/kernel.c -o $(OBJDIR)/kernel.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/font8x8_basic.c -o $(OBJDIR)/font8x8_basic.o && \
-	$(KERNEL_LD) $(KERNEL_LDFLAGS) $(OBJDIR)/boot.o $(OBJDIR)/kernel.o $(OBJDIR)/font8x8_basic.o -o $(BINDIR)/kernel.elf && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/pmm.c -o $(OBJDIR)/pmm.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/paging.c -o $(OBJDIR)/paging.o && \
+	$(KERNEL_LD) $(KERNEL_LDFLAGS) $(OBJDIR)/boot.o $(OBJDIR)/kernel.o $(OBJDIR)/font8x8_basic.o $(OBJDIR)/pmm.o $(OBJDIR)/paging.o -o $(BINDIR)/kernel.elf && \
 	mkdir -p ./target && \
 	cp $(BINDIR)/kernel.elf target/kernel.elf
 
@@ -51,7 +53,8 @@ run:
 		-device qemu-xhci \
 		-device usb-tablet \
 		-net none \
-		-serial stdio
+		-serial stdio \
+		-m 1024
 
 # Run with debugging enabled
 run-debug:
@@ -66,7 +69,8 @@ run-debug:
 		-serial stdio \
 		-d int,cpu_reset \
 		-no-reboot \
-		-no-shutdown
+		-no-shutdown \
+		-m 1024
 
 # usb:
 # 	sudo wipefs -a /dev/sda && \

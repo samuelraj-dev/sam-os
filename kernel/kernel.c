@@ -48,21 +48,11 @@
 //     }
 // }
 #include "font8x8_basic.h"
+#include "bootinfo.h"
+#include "types.h"
 
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-typedef unsigned int uint32_t;
-typedef unsigned long long uint64_t;
-
-typedef struct {
-    void* framebuffer;
-    uint32_t width;
-    uint32_t height;
-    uint32_t pixels_per_scanline;
-    void* memory_map;
-    uint64_t memory_map_size;
-    uint64_t memory_map_descriptor_size;
-} BootInfo;
+#include "paging.h"
+#include "pmm.h"
 
 // ==================== BASIC IO PORT ====================
 static inline uint8_t inb(uint16_t port) {
@@ -234,8 +224,54 @@ void print_memory_map(BootInfo* bootInfo) {
         print("\n");
     }
 }
+
+void print_total_ram(BootInfo* bootInfo)
+{
+    uint8_t* mmap = (uint8_t*)bootInfo->memory_map;
+    uint64_t total_bytes = 0;
+
+    for (uint64_t offset = 0;
+         offset < bootInfo->memory_map_size;
+         offset += bootInfo->memory_map_descriptor_size) {
+
+        EFI_MEMORY_DESCRIPTOR* desc =
+            (EFI_MEMORY_DESCRIPTOR*)(mmap + offset);
+
+        if (desc->Type == 7) {  // EfiConventionalMemory
+            total_bytes += desc->NumberOfPages * 4096ULL;
+        }
+    }
+
+    uint64_t total_mb = total_bytes / (1024 * 1024);
+
+    print("Usable RAM: ");
+    print_dec(total_mb);
+    print(" MB\n");
+}
+
+void debug_memory_map(BootInfo* bootInfo)
+{
+    uint8_t* mmap = (uint8_t*)bootInfo->memory_map;
+
+    print("---- Memory Map Debug ----\n");
+
+    for (uint64_t offset = 0;
+         offset < bootInfo->memory_map_size;
+         offset += bootInfo->memory_map_descriptor_size) {
+
+        uint32_t type = *(uint32_t*)(mmap + offset);
+
+        print("Type: ");
+        print_dec(type);
+        print("\n");
+    }
+
+    print("--------------------------\n");
+}
+
 void kernel_main(BootInfo* bootInfo)
 {
+    
     fb = (uint32_t*)bootInfo->framebuffer;
     screen_w = bootInfo->width;
     screen_h = bootInfo->height;
@@ -247,6 +283,14 @@ void kernel_main(BootInfo* bootInfo)
             fb[y * pitch + x] = bg_color;
 
     print("SamOS Kernel\n\n");
+
+    print("Memory map size: ");
+    print_dec(bootInfo->memory_map_size);
+    print("\n");
+
+    print("Descriptor size: ");
+    print_dec(bootInfo->memory_map_descriptor_size);
+    print("\n\n");
 
     print("Resolution: ");
     print_dec(screen_w);
@@ -264,7 +308,17 @@ void kernel_main(BootInfo* bootInfo)
     print_time();
     print("\n");
 
-    print_memory_map(bootInfo);
+    paging_init(bootInfo);
+    
+    print("\nPaging switched successfully.\n\n");
+    
+    print_total_ram(bootInfo);
+    // debug_memory_map(bootInfo);
+
+
+    // pmm_init(bootInfo);
+
+    // print("\nPMM initialized\n");
 
     while (1)
         __asm__ volatile ("hlt");

@@ -128,7 +128,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[ERROR] Failed to get loaded image protocol\r\n");
         while (1);
     }
-
+    
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[INFO] Got loaded image protocol\r\n");
 
     // Get the filesystem from the device we booted from
