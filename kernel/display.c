@@ -18,42 +18,62 @@ static uint32_t  cursor_y = 0;
 static uint32_t  fg_color = 0x00FFFFFF;
 static uint32_t  bg_color = 0x00303030;
 
+// dirty region tracking
+static uint8_t dirty_rows[2160] = {0};  // one bit per row, supports up to 2160 rows
+static uint8_t dirty = 0;              // any dirty rows at all?
+
+static void mark_dirty(uint32_t y) {
+    dirty_rows[y] = 1;
+    dirty = 1;
+}
+
 void display_set_shadow(uint32_t* buffer) {
     sb = buffer;
 }
 
 void display_flush(void)
 {
-    if (!sb || !fb) return;  // guard
+    if (!sb || !fb || !dirty) return;
 
-    uint64_t total_bytes = screen_h * pitch * 4;
-    uint64_t* src = (uint64_t*)sb;
-    uint64_t* dst = (uint64_t*)fb;
+    for (uint32_t y = 0; y < screen_h; y++) {
+        if (!dirty_rows[y]) continue;
 
-    for (uint64_t i = 0; i < total_bytes / 8; i++)
-        dst[i] = src[i];
+        // flush one row — copy pitch*4 bytes
+        uint64_t* src = (uint64_t*)(sb + y * pitch);
+        uint64_t* dst = (uint64_t*)(fb + y * pitch);
+        uint64_t  words = (pitch * 4) / 8;
+
+        for (uint64_t i = 0; i < words; i++)
+            dst[i] = src[i];
+
+        dirty_rows[y] = 0;
+    }
+
+    dirty = 0;
 }
 
 static void scroll(void)
 {
-    // copy rows up — use pitch for correct row stride
     uint64_t row_bytes = pitch * 4;
     uint8_t* src = (uint8_t*)sb + 10 * row_bytes;
     uint8_t* dst = (uint8_t*)sb;
     uint64_t copy_bytes = (screen_h - 10) * row_bytes;
 
-    // copy as uint64 for speed
     uint64_t* s64 = (uint64_t*)src;
     uint64_t* d64 = (uint64_t*)dst;
     for (uint64_t i = 0; i < copy_bytes / 8; i++)
         d64[i] = s64[i];
 
-    // clear bottom 10 rows
     for (uint32_t y = screen_h - 10; y < screen_h; y++)
         for (uint32_t x = 0; x < screen_w; x++)
             sb[y * pitch + x] = bg_color;
 
     cursor_y -= 10;
+
+    // mark all rows dirty after scroll
+    for (uint32_t y = 0; y < screen_h; y++)
+        dirty_rows[y] = 1;
+    dirty = 1;
 }
 
 void display_init(uint32_t* framebuffer, uint32_t width,
@@ -65,6 +85,9 @@ void display_init(uint32_t* framebuffer, uint32_t width,
     pitch    = pixels_per_scanline;
     cursor_x = 0;
     cursor_y = 0;
+    dirty    = 0;
+    for (uint32_t i = 0; i < height; i++)
+        dirty_rows[i] = 0;
 }
 
 uint32_t display_get_height(void) { return screen_h; }
@@ -80,8 +103,12 @@ void clear_screen() {
 //     fb[y * pitch + x] = color;
 // }
 static void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
-    if (sb) sb[y * pitch + x] = color;
-    else    fb[y * pitch + x] = color;
+    if (sb) {
+        sb[y * pitch + x] = color;
+        mark_dirty(y);
+    } else {
+        fb[y * pitch + x] = color;
+    }
 }
 
 void draw_char(char c, uint32_t x, uint32_t y) {

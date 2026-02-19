@@ -27,7 +27,7 @@ bootloader.efi: boot/bootloader.c
 debug: debug/main_debug.c
 	$(CC) $(CFLAGS) debug/main_debug.c -o $(BINDIR)/debug.efi $(LDFLAGS)
 
-kernel.elf: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kernel/pmm.c kernel/paging.c kernel/display.c kernel/gdt.c kernel/tss.c kernel/idt.c kernel/pic.c kernel/timer.c kernel/keyboard.c scripts/linker.ld
+kernel.elf: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kernel/pmm.c kernel/paging.c kernel/display.c kernel/gdt.c kernel/tss.c kernel/idt.c kernel/pic.c kernel/timer.c kernel/keyboard.c kernel/vmm.c scripts/linker.ld
 	$(KERNEL_AS) boot/boot.S -o $(OBJDIR)/boot.o && \
 	$(KERNEL_AS) kernel/isr.S -o $(OBJDIR)/isr.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/kernel.c -o $(OBJDIR)/kernel.o && \
@@ -41,7 +41,8 @@ kernel.elf: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kern
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/pic.c -o $(OBJDIR)/pic.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/timer.c -o $(OBJDIR)/timer.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/keyboard.c -o $(OBJDIR)/keyboard.o && \
-	$(KERNEL_LD) $(KERNEL_LDFLAGS) $(OBJDIR)/boot.o $(OBJDIR)/isr.o $(OBJDIR)/kernel.o $(OBJDIR)/font8x8_basic.o $(OBJDIR)/pmm.o $(OBJDIR)/paging.o $(OBJDIR)/display.o $(OBJDIR)/gdt.o $(OBJDIR)/tss.o $(OBJDIR)/idt.o $(OBJDIR)/pic.o $(OBJDIR)/timer.o $(OBJDIR)/keyboard.o -o $(BINDIR)/kernel.elf && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/vmm.c -o $(OBJDIR)/vmm.o && \
+	$(KERNEL_LD) $(KERNEL_LDFLAGS) $(OBJDIR)/boot.o $(OBJDIR)/isr.o $(OBJDIR)/kernel.o $(OBJDIR)/font8x8_basic.o $(OBJDIR)/pmm.o $(OBJDIR)/paging.o $(OBJDIR)/display.o $(OBJDIR)/gdt.o $(OBJDIR)/tss.o $(OBJDIR)/idt.o $(OBJDIR)/pic.o $(OBJDIR)/timer.o $(OBJDIR)/keyboard.o $(OBJDIR)/vmm.o -o $(BINDIR)/kernel.elf && \
 	mkdir -p ./target && \
 	cp $(BINDIR)/kernel.elf target/kernel.elf
 

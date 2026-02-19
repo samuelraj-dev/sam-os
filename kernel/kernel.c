@@ -9,6 +9,7 @@
 #include "keyboard.h"
 #include "paging.h"
 #include "pmm.h"
+#include "vmm.h"
 
 #include "types.h"
 
@@ -268,6 +269,27 @@ void kernel_main(BootInfo* bootInfo)
         shadow[i] = 0x00303030;
 
     display_flush();
+
+    // after pmm_init and shadow buffer setup, before sti:
+    vmm_init();
+
+    // test — create an address space and map a page
+    AddressSpace* test_as = vmm_create_address_space();
+    void* phys_page = pmm_alloc_page();
+    vmm_map(test_as, 0x400000, (uint64_t)phys_page,
+            VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER);
+
+    // verify mapping
+    uint64_t resolved = vmm_virt_to_phys(test_as, 0x400000);
+    print("VMM test — mapped 0x400000 to phys: ");
+    print_hex(resolved);
+    print("\n");
+
+    // cleanup test
+    vmm_unmap(test_as, 0x400000);
+    pmm_free_page(phys_page);
+    vmm_destroy_address_space(test_as);
+    print("VMM test passed\n");
 
     __asm__ volatile ("sti");
 

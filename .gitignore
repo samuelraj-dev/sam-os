@@ -11,6 +11,7 @@ startup.nsh
 
 CONFIG.md
 ROADMAP.md
+ROADMAP*.md
 
 *.o
 *.elf
