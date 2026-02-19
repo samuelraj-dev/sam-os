@@ -21,6 +21,7 @@ A from-scratch x86_64 kernel built with a custom UEFI bootloader, ELF loader, Vi
 - Timers
 - Keyboard & PS/2 controller
 - Higher-Half Kernel
+- Virutal Memory Manager (VMM)
 
 ## Build Requirements
 
