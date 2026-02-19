@@ -2,31 +2,17 @@
 .global _start
 
 _start:
-    # Disable interrupts
-    cli
-    
-    # Clear direction flag
-    cld
-    
-    # Set up stack pointer
-    mov $stack_top, %rsp
-    
-    # Align stack to 16 bytes (required by System V ABI)
-    and $-16, %rsp
-    
-    # Zero the base pointer
-    xor %rbp, %rbp
+    cli # Disable interrupts
+    cld # Clear direction flag
+    mov $stack_top, %rsp # Set up stack pointer
+    and $-16, %rsp # Align stack to 16 bytes (required by System V ABI)
+    xor %rbp, %rbp # Zero the base pointer
     
     # BootInfo pointer is already in %rdi (first argument)
-    # Save it in a callee-saved register just in case
-    mov %rdi, %rbx
-    
-    # Call kernel_main
-    mov %rbx, %rdi
+    mov %rdi, %rbx # Save it in a callee-saved register just in case
+    mov %rbx, %rdi # Call kernel_main
     call kernel_main
-    
-    # If kernel_main returns, halt
-.halt:
+.halt: # If kernel_main returns, halt
     cli
     hlt
     jmp .halt

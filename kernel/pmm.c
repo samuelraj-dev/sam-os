@@ -205,54 +205,33 @@ static int bitmap_test(uint64_t page_index) {
     return bitmap[page_index / 8] & (1 << (page_index % 8));
 }
 
-// ── init ────────────────────────────────────────────────
 void pmm_init(BootInfo* bootInfo) {
     uint8_t*  mmap  = (uint8_t*)bootInfo->memory_map;
     uint64_t  dsize = bootInfo->memory_map_descriptor_size;
 
-    // 1. find highest physical address to size the bitmap
     uint64_t max_addr = 0;
     for (uint64_t off = 0; off < bootInfo->memory_map_size; off += dsize) {
         EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(mmap + off);
-        if (desc->Type != 7) continue;  // only conventional memory
         uint64_t end = desc->PhysicalStart + desc->NumberOfPages * PAGE_SIZE;
         if (end > max_addr) max_addr = end;
     }
 
-    // then add framebuffer coverage
-    uint64_t fb_end = (uint64_t)bootInfo->framebuffer +
-                    bootInfo->height * bootInfo->pixels_per_scanline * 4;
-    if (fb_end > max_addr) max_addr = fb_end;
-
     total_pages = max_addr / PAGE_SIZE;
-    bitmap_size = (total_pages + 7) / 8;  // round up to bytes
+    bitmap_size = (total_pages + 7) / 8;
 
-    // 2. place bitmap right after _kernel_end, page-aligned
-    //    (paging already identity-maps this region)
-
-    // extern uint64_t _kernel_end;
-    // bitmap = (uint8_t*)(((uint64_t)&_kernel_end + PAGE_SIZE - 1)
-    //                     & ~(uint64_t)(PAGE_SIZE - 1));
+    // place bitmap after page tables — paging_arena_end is physical
     extern uint64_t paging_arena_end;
     bitmap = (uint8_t*)paging_arena_end;
 
-    uint64_t pt_start_page = ((uint64_t)&_kernel_end + PAGE_SIZE-1) / PAGE_SIZE;
-    uint64_t pt_end_page   = paging_arena_end / PAGE_SIZE;
-    for (uint64_t p = pt_start_page; p < pt_end_page; p++) {
-        if (!bitmap_test(p)) { bitmap_set(p); free_pages--; }
-    }
-
-    // 3. start pessimistic: mark everything used
+    // mark everything used
     for (uint64_t i = 0; i < bitmap_size; i++)
         bitmap[i] = 0xFF;
-
     free_pages = 0;
 
-    // 4. free only EfiConventionalMemory regions
+    // free conventional memory
     for (uint64_t off = 0; off < bootInfo->memory_map_size; off += dsize) {
         EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(mmap + off);
-        if (desc->Type != 7) continue;  // only EfiConventionalMemory
-
+        if (desc->Type != 7) continue;
         for (uint64_t p = 0; p < desc->NumberOfPages; p++) {
             uint64_t page = (desc->PhysicalStart / PAGE_SIZE) + p;
             bitmap_clear(page);
@@ -260,29 +239,31 @@ void pmm_init(BootInfo* bootInfo) {
         }
     }
 
-    // 5. re-mark regions that are actually in use as used:
-
-    // kernel image
-    extern uint8_t _kernel_start;
-    uint64_t k_start_page = (uint64_t)&_kernel_start / PAGE_SIZE;
-    uint64_t k_end_page   = ((uint64_t)&_kernel_end + PAGE_SIZE - 1) / PAGE_SIZE;
-    for (uint64_t p = k_start_page; p < k_end_page; p++) {
+    // mark kernel used
+    uint64_t kernel_end_virt = (uint64_t)&_kernel_end;
+    uint64_t kernel_end_phys = kernel_end_virt - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE;
+    uint64_t k_start = KERNEL_PHYS_BASE / PAGE_SIZE;
+    uint64_t k_end   = (kernel_end_phys + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (uint64_t p = k_start; p < k_end; p++)
         if (!bitmap_test(p)) { bitmap_set(p); free_pages--; }
-    }
 
-    // bitmap itself
-    uint64_t bm_start_page = (uint64_t)bitmap / PAGE_SIZE;
-    uint64_t bm_end_page   = ((uint64_t)bitmap + bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    for (uint64_t p = bm_start_page; p < bm_end_page; p++) {
+    // mark page tables used
+    uint64_t pt_start = k_end;
+    uint64_t pt_end   = paging_arena_end / PAGE_SIZE;
+    for (uint64_t p = pt_start; p < pt_end; p++)
         if (!bitmap_test(p)) { bitmap_set(p); free_pages--; }
-    }
 
-    // page 0 — never allocate null
+    // mark bitmap itself used
+    uint64_t bm_start = paging_arena_end / PAGE_SIZE;
+    uint64_t bm_end   = (paging_arena_end + bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (uint64_t p = bm_start; p < bm_end; p++)
+        if (!bitmap_test(p)) { bitmap_set(p); free_pages--; }
+
+    // never allocate page 0
     if (!bitmap_test(0)) { bitmap_set(0); free_pages--; }
 
-    print("PMM: total pages: "); print_dec(total_pages); print("\n");
-    print("PMM: free pages:  "); print_dec(free_pages);  print("\n");
-    print("PMM: free RAM:    "); print_dec(free_pages * PAGE_SIZE / (1024*1024));
+    print("PMM: free RAM: ");
+    print_dec(free_pages * PAGE_SIZE / (1024 * 1024));
     print(" MB\n");
 }
 

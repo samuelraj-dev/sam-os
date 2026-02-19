@@ -1,0 +1,171 @@
+#include "paging.h"
+#include "display.h"
+#include "types.h"
+
+#define PAGE_SIZE        4096
+#define ENTRIES          512
+#define PSE_2MB          0x200000ULL
+#define KERNEL_VIRT_BASE 0xFFFFFFFF80000000ULL
+
+// Convert a higher-half virtual address (linker symbols) to physical.
+// Only use this for addresses that are genuinely in the higher half.
+#define VIRT_TO_PHYS(v)  ((uint64_t)(v) - KERNEL_VIRT_BASE)
+
+// Page flag bits
+#define PF_PRESENT   (1ULL << 0)
+#define PF_WRITABLE  (1ULL << 1)
+#define PF_HUGE      (1ULL << 7)   // 2MB page in PD entry
+#define PF_PCD       (1ULL << 4)   // Page Cache Disable (uncached)
+#define PF_PWT       (1ULL << 3)   // Page Write-Through
+
+// Normal RAM: present + writable + huge
+#define FLAGS_RAM    (PF_PRESENT | PF_WRITABLE | PF_HUGE)
+// MMIO (framebuffer): present + writable + huge + uncached
+#define FLAGS_MMIO   (PF_PRESENT | PF_WRITABLE | PF_HUGE | PF_PCD)
+
+// Table entry flags (non-leaf): present + writable
+#define FLAGS_TABLE  (PF_PRESENT | PF_WRITABLE)
+
+// ── Arena allocator ──────────────────────────────────────────────────────────
+// Allocates 4KB-aligned zeroed pages from physical memory just after the kernel.
+// next_free_table is a PHYSICAL address — alloc_table() returns physical pointers.
+// These physical addresses are used directly as page table entries (correct).
+// They are also used as C pointers to write into the tables — this works because
+// the identity map covers this region (phys == virt for low addresses).
+
+static uint64_t* pml4 = 0;
+static uint64_t* pdpt = 0;
+static uint64_t  next_free_table = 0;
+uint64_t         paging_arena_end = 0;
+
+#define ARENA_MAX 0x800000ULL   // 8MB cap — plenty for page tables
+
+static uint64_t* alloc_table(void)
+{
+    if (next_free_table + PAGE_SIZE > ARENA_MAX) {
+        // Out of arena space — halt
+        while (1) __asm__ volatile ("hlt");
+    }
+    uint64_t* addr = (uint64_t*)next_free_table;
+    next_free_table += PAGE_SIZE;
+    // Zero the table
+    for (int i = 0; i < ENTRIES; i++) addr[i] = 0;
+    return addr;
+}
+
+// ── paging_init ──────────────────────────────────────────────────────────────
+void paging_init(BootInfo* bootInfo)
+{
+    print("paging_init entered\n");
+
+    // ── Arena starts right after kernel image (physical) ────────────────────
+    // _kernel_end is a linker symbol with a VIRTUAL address → convert to physical
+    uint64_t phys_end    = VIRT_TO_PHYS((uint64_t)&_kernel_end);
+    next_free_table      = (phys_end + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+
+    print("arena start (phys): "); print_hex(next_free_table); print("\n");
+
+    // ── Allocate top-level tables ────────────────────────────────────────────
+    // alloc_table() returns PHYSICAL addresses — use directly in entries and CR3
+    pml4 = alloc_table();   // e.g. 0x10C000
+    pdpt = alloc_table();   // e.g. 0x10D000
+
+    // ── Compute max physical address to map ──────────────────────────────────
+    uint8_t* mmap  = (uint8_t*)bootInfo->memory_map;
+    uint64_t dsize = bootInfo->memory_map_descriptor_size;
+    uint64_t ram_top = 0;
+
+    for (uint64_t off = 0; off < bootInfo->memory_map_size; off += dsize) {
+        EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(mmap + off);
+        // Only count actual RAM types for the top
+        if (desc->Type == 7 || desc->Type == 1 || desc->Type == 2) {
+            uint64_t end = desc->PhysicalStart + desc->NumberOfPages * PAGE_SIZE;
+            if (end > ram_top) ram_top = end;
+        }
+    }
+
+    // Round up to next 2MB boundary
+    ram_top = (ram_top + PSE_2MB - 1) & ~(PSE_2MB - 1);
+
+    // Sanity cap — never map more than 8GB
+    if (ram_top > 0x200000000ULL) ram_top = 0x200000000ULL;
+
+    print("ram_top: "); print_hex(ram_top); print("\n");
+
+    // ── Framebuffer info ─────────────────────────────────────────────────────
+    uint64_t fb_phys  = (uint64_t)bootInfo->framebuffer;
+    uint64_t fb_end   = fb_phys + (uint64_t)bootInfo->height *
+                        bootInfo->pixels_per_scanline * 4;
+    fb_end = (fb_end + PSE_2MB - 1) & ~(PSE_2MB - 1);
+
+    print("fb_phys: "); print_hex(fb_phys); print("\n");
+    print("fb_end:  "); print_hex(fb_end);  print("\n");
+
+    // max_memory must cover both RAM and framebuffer
+    uint64_t max_memory = (fb_end > ram_top) ? fb_end : ram_top;
+
+    print("max_memory: "); print_hex(max_memory); print("\n");
+
+    // ── Build identity map: virt 0x0 → phys 0x0 up to max_memory ────────────
+    // Also builds higher-half map via pdpt[510] below.
+    //
+    // Layout:
+    //   pml4[0]   → pdpt          (identity: covers 0..512GB virtual)
+    //   pml4[511] → pdpt          (higher half: 0xFFFFFFFF80000000..)
+    //   pdpt[0]   → pd0           (0GB..1GB physical)
+    //   pdpt[1]   → pd1           (1GB..2GB physical)
+    //   pdpt[2]   → pd2           (2GB..3GB physical — framebuffer here)
+    //   ...
+    //   pdpt[510] → pd0 (alias)   (higher-half kernel: virt 0xFFFFFFFF80000000
+    //                              → same physical 0..1GB where kernel lives)
+
+    uint64_t addr         = 0;
+    uint64_t first_pd_phys = 0;   // physical address of pd0 (covers 0..1GB)
+
+    for (uint64_t pdpt_i = 0; addr < max_memory && pdpt_i < ENTRIES; pdpt_i++) {
+        uint64_t* pd       = alloc_table();          // physical ptr
+        uint64_t  pd_phys  = (uint64_t)pd;           // IS already physical
+
+        if (pdpt_i == 0) first_pd_phys = pd_phys;   // save pd0 for higher-half alias
+
+        pdpt[pdpt_i] = pd_phys | FLAGS_TABLE;
+
+        for (uint64_t pd_i = 0; pd_i < ENTRIES && addr < max_memory; pd_i++) {
+            // Determine if this 2MB region is the framebuffer → map as uncached
+            if (addr >= fb_phys && addr < fb_end)
+                pd[pd_i] = addr | FLAGS_MMIO;
+            else
+                pd[pd_i] = addr | FLAGS_RAM;
+
+            addr += PSE_2MB;
+        }
+    }
+
+    // ── Wire PML4 ────────────────────────────────────────────────────────────
+    pml4[0]   = (uint64_t)pdpt | FLAGS_TABLE;   // identity map
+    pml4[511] = (uint64_t)pdpt | FLAGS_TABLE;   // higher half
+
+    // ── Higher-half alias ────────────────────────────────────────────────────
+    // 0xFFFFFFFF80000000 decodes as: PML4[511] → pdpt[510]
+    // Kernel is loaded at physical 0x100000 (within first 1GB = pd0)
+    pdpt[510] = first_pd_phys | FLAGS_TABLE;
+
+    // ── Debug prints ─────────────────────────────────────────────────────────
+    print("pml4:       "); print_hex((uint64_t)pml4);       print("\n");
+    print("pdpt:       "); print_hex((uint64_t)pdpt);       print("\n");
+    print("first_pd:   "); print_hex(first_pd_phys);        print("\n");
+    print("pdpt[0]:    "); print_hex(pdpt[0]);               print("\n");
+    print("pdpt[2]:    "); print_hex(pdpt[2]);               print("\n");
+    print("pdpt[510]:  "); print_hex(pdpt[510]);             print("\n");
+
+    // ── Switch CR3 ───────────────────────────────────────────────────────────
+    // Must disable interrupts around the switch — a timer IRQ mid-switch
+    // would use the half-built tables and triple-fault.
+    __asm__ volatile ("cli");
+    __asm__ volatile ("mov %0, %%cr3" :: "r"((uint64_t)pml4) : "memory");
+    __asm__ volatile ("sti");
+
+    paging_arena_end = next_free_table;
+
+    print("paging_init done\n");
+}

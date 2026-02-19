@@ -1,0 +1,23 @@
+.equ KERNEL_VIRT_BASE, 0xFFFFFFFF80000000
+
+.section .text
+.global _start
+.type _start, @function
+
+_start:
+    cli
+    cld
+    mov $stack_top, %rsp
+    and $-16, %rsp
+    xor %rbp, %rbp
+
+    # rdi = physical bootInfo pointer, convert to virtual
+    mov $0xFFFFFFFF80000000, %rax
+    add %rax, %rdi
+
+    call kernel_main
+
+.halt:
+    cli
+    hlt
+    jmp .halt

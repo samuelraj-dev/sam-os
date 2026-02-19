@@ -10,16 +10,16 @@ LDFLAGS = -nostdlib -Wl,--subsystem,10 -Wl,-entry,efi_main
 
 KERNEL_CFLAGS = -ffreestanding -mno-red-zone -fno-stack-protector \
                 -nostdlib -nostdinc -fno-builtin -Wall -Wextra \
-                -fno-pic -fno-pie
+                -fno-pic -fno-pie -mcmodel=kernel
 
 KERNEL_LDFLAGS = -T scripts/linker.ld -nostdlib
 
 BINDIR = bin
 OBJDIR = build
 
-all: bootloader kernel
+all: bootloader.efi kernel.elf
 
-bootloader: boot/bootloader.c
+bootloader.efi: boot/bootloader.c
 	$(CC) $(CFLAGS) boot/bootloader.c -o $(BINDIR)/BOOTX64.EFI $(LDFLAGS) && \
 	mkdir -p target/EFI/BOOT && \
 	cp $(BINDIR)/BOOTX64.EFI target/EFI/BOOT/BOOTX64.EFI
@@ -27,7 +27,7 @@ bootloader: boot/bootloader.c
 debug: debug/main_debug.c
 	$(CC) $(CFLAGS) debug/main_debug.c -o $(BINDIR)/debug.efi $(LDFLAGS)
 
-kernel: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kernel/pmm.c kernel/paging.c kernel/display.c kernel/gdt.c kernel/tss.c kernel/idt.c kernel/pic.c kernel/timer.c kernel/keyboard.c scripts/linker.ld
+kernel.elf: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kernel/pmm.c kernel/paging.c kernel/display.c kernel/gdt.c kernel/tss.c kernel/idt.c kernel/pic.c kernel/timer.c kernel/keyboard.c scripts/linker.ld
 	$(KERNEL_AS) boot/boot.S -o $(OBJDIR)/boot.o && \
 	$(KERNEL_AS) kernel/isr.S -o $(OBJDIR)/isr.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/kernel.c -o $(OBJDIR)/kernel.o && \
@@ -52,18 +52,33 @@ debug-kernel:
 	objdump -d $(BINDIR)/kernel.elf | head -30
 
 # Run with serial output for debugging
+# run:
+# 	cd target && \
+# 	qemu-system-x86_64 \
+# 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+# 		-drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+# 		-drive format=raw,file=fat:rw:. \
+# 		-device qemu-xhci \
+# 		-device usb-tablet \
+# 		-net none \
+# 		-serial stdio \
+# 		-m 1024
 run:
 	cd target && \
+	cp /usr/share/OVMF/OVMF_CODE_4M.fd OVMF_CODE.fd && \
+	cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd && \
 	qemu-system-x86_64 \
-		-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-		-drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+		-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
+		-drive if=pflash,format=raw,file=OVMF_VARS.fd \
 		-drive format=raw,file=fat:rw:. \
 		-device qemu-xhci \
 		-device usb-tablet \
 		-net none \
 		-serial stdio \
-		-m 1024
-
+		-m 1024 \
+		-d int,cpu_reset \
+		-no-reboot \
+		-no-shutdown 2>&1 | tee qemu.log
 # Run with debugging enabled
 run-debug:
 	cd target && \

@@ -242,25 +242,34 @@ void kernel_main(BootInfo* bootInfo)
 
     pic_unmask(0);
     pic_unmask(1);
-
-    __asm__ volatile ("sti");
+    
+    // __asm__ volatile ("sti");
 
     paging_init(bootInfo);
     print("\nPaging switched successfully.\n\n");
+    gdt_init();
+    tss_init();
+
     pmm_init(bootInfo);
     print("\nInitialized Physical Memory Manager (PMM).\n\n");
 
     // allocate shadow buffer — 1920*1080*4 = 8MB = 2048 pages
-    uint32_t fb_bytes = screen_h * pitch * 4;
+    uint32_t fb_bytes = display_get_height() * display_get_pitch() * 4;
     uint32_t fb_pages = (fb_bytes + 4095) / 4096;
     uint32_t* shadow = (uint32_t*)pmm_alloc_pages(fb_pages);
+    if (!shadow) {
+        print("ERROR: shadow alloc failed\n");
+        while(1);
+    }
     display_set_shadow(shadow);
 
     // clear shadow to match real fb
-    for (uint32_t i = 0; i < screen_h * pitch; i++)
+    for (uint32_t i = 0; i < display_get_height() * display_get_pitch(); i++)
         shadow[i] = 0x00303030;
 
     display_flush();
+
+    __asm__ volatile ("sti");
 
     // void* p1 = pmm_alloc_page();
     // void* p2 = pmm_alloc_page();

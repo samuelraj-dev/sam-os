@@ -24,7 +24,7 @@ void display_set_shadow(uint32_t* buffer) {
 
 void display_flush(void)
 {
-    if (!sb) return;
+    if (!sb || !fb) return;  // guard
 
     uint64_t total_bytes = screen_h * pitch * 4;
     uint64_t* src = (uint64_t*)sb;
