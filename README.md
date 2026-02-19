@@ -20,6 +20,7 @@ A from-scratch x86_64 kernel built with a custom UEFI bootloader, ELF loader, Vi
 - Programmable Interrupt Controller (PIC)
 - Timers
 - Keyboard & PS/2 controller
+- Higher-Half Kernel
 
 ## Build Requirements
 
