@@ -10,6 +10,9 @@
 #include "paging.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "percpu.h"
+#include "syscall.h"
+#include "process.h"
 
 #include "types.h"
 
@@ -291,6 +294,9 @@ void kernel_main(BootInfo* bootInfo)
     vmm_destroy_address_space(test_as);
     print("VMM test passed\n");
 
+    percpu_init();
+    syscall_init();
+
     __asm__ volatile ("sti");
 
     // void* p1 = pmm_alloc_page();
@@ -300,6 +306,23 @@ void kernel_main(BootInfo* bootInfo)
     // pmm_free_page(p1);
     // void* p3 = pmm_alloc_page();  // should return same as p1
     // print("alloc3: "); print_hex((uint64_t)p3); print("\n");
+
+    // these symbols come from hello_blob.o
+    extern uint8_t _binary_user_hello_bin_start[];
+    extern uint8_t _binary_user_hello_bin_end[];
+
+    uint64_t hello_size = _binary_user_hello_bin_end
+                        - _binary_user_hello_bin_start;
+
+    print("Launching user process...\n");
+    Process* proc = process_create_from_elf(
+        _binary_user_hello_bin_start, hello_size);
+
+    if (proc) {
+        process_run(proc);  // does not return
+    } else {
+        print("Failed to create process\n");
+    }
 
     print("SamOS ready type something:\n");
 
