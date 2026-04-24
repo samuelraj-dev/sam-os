@@ -228,9 +228,11 @@ void kernel_main(BootInfo* bootInfo)
     run_heap_smoke_tests();
     acpi_init(bootInfo);
     enable_interrupts();
-
+    
+    display_clear();
     print("\nSamOS ready. Timer + keyboard IRQs enabled.\n");
     display_flush();
+    print("sam> ");
 
     uint64_t last_tick_report = 0;
     while (1) {
@@ -242,9 +244,9 @@ void kernel_main(BootInfo* bootInfo)
         uint64_t ticks = timer_get_ticks();
         if (ticks >= last_tick_report + TIMER_HZ) {
             last_tick_report = ticks;
-            print("tick: ");
-            print_dec(ticks);
-            print("\n");
+            // print("tick: ");
+            // print_dec(ticks);
+            // print("\n");
         }
     }
 }

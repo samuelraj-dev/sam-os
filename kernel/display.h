@@ -13,3 +13,5 @@ void print_char(char c);
 void print(const char* str);
 void print_hex(uint64_t val);
 void print_dec(uint64_t val);
+
+void display_clear(void);

@@ -1,5 +1,6 @@
 #include "keyboard.h"
 #include "display.h"
+#include "input.h"
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t val;
@@ -51,7 +52,18 @@ void keyboard_handler(void)
         return;
 
     if (scancode < 128 && scancode_map[scancode]) {
-        char str[2] = { scancode_map[scancode], 0 };
-        print(str);
+
+        // char str[2] = { scancode_map[scancode], 0 };
+        // print(str);
+
+        char c = scancode_map[scancode];
+
+        if (c == '\b') {
+            input_backspace();
+        } else if (c == '\n') {
+            input_submit();
+        } else if (c) {
+            input_putc(c);
+        }
     }
 }

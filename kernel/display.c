@@ -191,3 +191,20 @@ void print_dec(uint64_t val) {
     for (int j = i - 1; j >= 0; j--)
         print_char(buf[j]);
 }
+
+void display_clear(void)
+{
+    if (!sb) return;
+
+    for (uint32_t y = 0; y < screen_h; y++) {
+        for (uint32_t x = 0; x < pitch; x++) {
+            sb[y * pitch + x] = bg_color;
+        }
+        dirty_rows[y] = 1;
+    }
+
+    dirty = 1;
+
+    cursor_x = 0;
+    cursor_y = 0;
+}
