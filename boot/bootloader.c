@@ -300,6 +300,7 @@ typedef struct {
     EFI_MEMORY_DESCRIPTOR* memory_map;
     UINTN memory_map_size;
     UINTN memory_map_descriptor_size;
+    void* rsdp;
 } BootInfo;
 
 typedef struct {
@@ -350,6 +351,35 @@ void print_hex(EFI_SYSTEM_TABLE *SystemTable, UINT64 value)
         buffer[2 + 15 - i] = hex[(value >> (i * 4)) & 0xF];
     buffer[18] = 0;
     SystemTable->ConOut->OutputString(SystemTable->ConOut, buffer);
+}
+
+int guid_equal(EFI_GUID* a, EFI_GUID* b)
+{
+    if (a->Data1 != b->Data1 || a->Data2 != b->Data2 || a->Data3 != b->Data3)
+        return 0;
+
+    for (int i = 0; i < 8; i++)
+        if (a->Data4[i] != b->Data4[i])
+            return 0;
+    return 1;
+}
+
+void* find_rsdp(EFI_SYSTEM_TABLE* SystemTable)
+{
+    EFI_GUID acpi20 =
+        { 0x8868e871, 0xe4f1, 0x11d3, {0xbc,0x22,0x00,0x80,0xc7,0x3c,0x88,0x81}};
+    EFI_GUID acpi10 =
+        { 0xeb9d2d30, 0x2d88, 0x11d3, {0x9a,0x16,0x00,0x90,0x27,0x3f,0xc1,0x4d}};
+
+    void* fallback = 0;
+    for (UINTN i = 0; i < SystemTable->NumberOfTableEntries; i++) {
+        EFI_CONFIGURATION_TABLE* table = &SystemTable->ConfigurationTable[i];
+        if (guid_equal(&table->VendorGuid, &acpi20))
+            return table->VendorTable;
+        if (guid_equal(&table->VendorGuid, &acpi10))
+            fallback = table->VendorTable;
+    }
+    return fallback;
 }
 
 EFI_STATUS
@@ -501,9 +531,13 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     bootInfo->width               = gop->Mode->Info->HorizontalResolution;
     bootInfo->height              = gop->Mode->Info->VerticalResolution;
     bootInfo->pixels_per_scanline = gop->Mode->Info->PixelsPerScanLine;
+    bootInfo->rsdp                = find_rsdp(SystemTable);
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[INFO] Framebuffer at: ");
     print_hex(SystemTable, (UINT64)gop->Mode->FrameBufferBase);
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[INFO] RSDP at: ");
+    print_hex(SystemTable, (UINT64)bootInfo->rsdp);
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
 
     // ── Build Page Tables ────────────────────────────────────

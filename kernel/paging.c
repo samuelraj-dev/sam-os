@@ -82,10 +82,26 @@
 #define PSE_2MB   0x200000ULL
 #define EFI_CONVENTIONAL_MEMORY 7
 
+#define PAGE_PRESENT  (1ULL << 0)
+#define PAGE_WRITE    (1ULL << 1)
+#define PAGE_HUGE     (1ULL << 7)
+#define PAGE_NX       (1ULL << 63)
+
 static uint64_t* pml4;
 static uint64_t* pdpt;
 static uint64_t  next_free_table;
 uint64_t paging_arena_end = 0; 
+uint64_t kernel_cr3;
+
+static inline uint64_t rdmsr(uint32_t msr) {
+    uint32_t lo, hi;
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((uint64_t)hi << 32) | lo;
+}
+static inline void wrmsr(uint32_t msr, uint64_t val) {
+    __asm__ volatile ("wrmsr"
+        :: "c"(msr), "a"((uint32_t)val), "d"((uint32_t)(val >> 32)));
+}
 
 static void* alloc_table(void) {
     uint8_t* addr = (uint8_t*)next_free_table;
@@ -114,7 +130,8 @@ void paging_init(BootInfo* bootInfo) {
     for (uint64_t off = 0; off < bootInfo->memory_map_size; off += dsize) {
         EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(mmap + off);
         uint64_t end = desc->PhysicalStart + desc->NumberOfPages * PAGE_SIZE;
-        if (desc->Type == 7 || desc->Type == 1 || desc->Type == 2)
+        // if (desc->Type == 7 || desc->Type == 1 || desc->Type == 2)
+        if (desc->Type == EFI_CONVENTIONAL_MEMORY)
             if (end > ram_top) ram_top = end;
     }
 
@@ -127,9 +144,11 @@ void paging_init(BootInfo* bootInfo) {
     uint64_t addr = 0;
     for (uint64_t pdpt_i = 0; addr < max_memory && pdpt_i < ENTRIES; pdpt_i++) {
         uint64_t* pd = alloc_table();
-        pdpt[pdpt_i] = (uint64_t)pd | 0x3;
+        // pdpt[pdpt_i] = (uint64_t)pd | 0x3;
+        pdpt[pdpt_i] = (uint64_t)pd | PAGE_PRESENT | PAGE_WRITE;
         for (uint64_t pd_i = 0; pd_i < ENTRIES && addr < max_memory; pd_i++) {
-            pd[pd_i] = addr | 0x83;
+            // pd[pd_i] = addr | 0x83;
+            pd[pd_i] = addr | PAGE_PRESENT | PAGE_WRITE | PAGE_HUGE | PAGE_NX;
             addr += PSE_2MB;
         }
     }
@@ -147,10 +166,23 @@ void paging_init(BootInfo* bootInfo) {
         phys += PSE_2MB;
     }
 
+    uint64_t efer = rdmsr(0xC0000080);
+    efer |= (1ULL << 11);  // NXE bit
+    wrmsr(0xC0000080, efer);
+
+    // verify
+    uint64_t efer_check = rdmsr(0xC0000080);
+    print("EFER after NXE: "); print_hex(efer_check); print("\n"); display_flush();
+
     __asm__ volatile ("cli");
     __asm__ volatile ("mov %0, %%cr3" :: "r"(pml4) : "memory");
 
+    // store kernel CR3 at physical 0x500 — always accessible
+    // regardless of which address space is active
+    // *((volatile uint64_t*)0x500) = (uint64_t)pml4;
+    kernel_cr3 = (uint64_t)pml4;
     paging_arena_end = next_free_table;
+    print("paging_arena_end = "); print_hex(paging_arena_end); print("\n");
 }
 
 void paging_remove_identity_map(void)

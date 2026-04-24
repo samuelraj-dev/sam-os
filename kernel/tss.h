@@ -22,6 +22,7 @@ typedef struct {
     uint16_t iopb_offset; // I/O permission bitmap offset
 } __attribute__((packed)) TSS;
 
+void tss_set_rsp0(uint64_t rsp);
 void tss_init(void);
 
 #endif

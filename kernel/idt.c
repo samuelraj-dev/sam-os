@@ -1,6 +1,6 @@
 #include "idt.h"
 #include "gdt.h"
-#include "pic.h"
+#include "irq.h"
 #include "timer.h"
 #include "keyboard.h"
 #include "display.h"
@@ -47,7 +47,7 @@ void idt_init(void)
     // zero all entries first
     for (int i = 0; i < 256; i++) {
         uint8_t* p = (uint8_t*)&idt[i];
-        for (int j = 0; j < sizeof(IDTEntry); j++) p[j] = 0;
+        for (uint64_t j = 0; j < sizeof(IDTEntry); j++) p[j] = 0;
     }
 
     // 0x8E = present, ring 0, interrupt gate (clears IF on entry)
@@ -155,11 +155,14 @@ void interrupt_handler(InterruptFrame* frame)
         if (!(isr & 0x80)) return;  // spurious, don't send EOI
     }
 
+    int send_eoi = 1;
+
     switch (irq) {
         case 0: timer_handler();    break;
         case 1: keyboard_handler(); break;
         default: break;
     }
 
-    pic_send_eoi(irq);
+    if (send_eoi)
+        irq_send_eoi(irq);
 }

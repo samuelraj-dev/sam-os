@@ -1,5 +1,6 @@
 #include "syscall.h"
 #include "display.h"
+#include "vmm.h"
 
 #define MSR_EFER   0xC0000080
 #define MSR_STAR   0xC0000081
@@ -19,39 +20,44 @@ static inline uint64_t rdmsr(uint32_t msr) {
 
 // called from syscall_entry.S
 // rdi=num, rsi=arg0, rdx=arg1, rcx=arg2
+// At this point, CR3 has already been switched to kernel in syscall_entry.S
+// So we can safely access kernel memory and framebuffer
 void syscall_handler(uint64_t num, uint64_t arg0,
                      uint64_t arg1, uint64_t arg2)
 {
     (void)arg2;
+    
+    print("[syscall ");
+    print_dec(num);
+    print("] ");
+    display_flush();
+    
     switch (num) {
         case SYS_WRITE: {
-            // arg0 = string pointer (user virtual address)
-            // arg1 = length
             char* str = (char*)arg0;
             for (uint64_t i = 0; i < arg1; i++) {
                 char c[2] = { str[i], 0 };
                 print(c);
             }
+            display_flush();
             break;
         }
         case SYS_EXIT:
             print("[process exited]\n");
+            display_flush();
             while(1) __asm__ volatile ("hlt");
-            break;
-        default:
-            print("unknown syscall: ");
-            print_dec(num);
-            print("\n");
             break;
     }
 }
 
 void syscall_init(void)
 {
-    // enable SCE in EFER
     uint64_t efer = rdmsr(MSR_EFER);
-    efer |= 1;
+    efer |= 1;  // SCE bit only — don't clear NXE
     wrmsr(MSR_EFER, efer);
+
+    uint64_t efer_check2 = rdmsr(MSR_EFER);
+    print("EFER after SCE: "); print_hex(efer_check2); print("\n"); display_flush();
 
     // STAR:
     // bits 47:32 = kernel CS = 0x08

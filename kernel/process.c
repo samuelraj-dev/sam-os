@@ -1,12 +1,16 @@
 #include "process.h"
+#include "percpu.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "paging.h"
 #include "display.h"
 
 // ELF types
 #define PT_LOAD   1
 #define PF_W      2
 #define PF_R      4
+
+#define PHYS_TO_VIRT(x) ((void*)((uint64_t)(x) + KERNEL_BASE))
 
 typedef struct {
     uint8_t  e_ident[16];
@@ -40,72 +44,86 @@ static uint64_t next_pid = 1;
 
 Process* process_create_from_elf(void* elf_data, uint64_t size)
 {
-    (void)size;
+    if (!elf_data || size < sizeof(Elf64_Ehdr)) {
+        print("process: ELF buffer too small\n");
+        return 0;
+    }
+
     Elf64_Ehdr* ehdr = (Elf64_Ehdr*)elf_data;
 
-    // validate ELF
     if (ehdr->e_ident[0] != 0x7F || ehdr->e_ident[1] != 'E' ||
         ehdr->e_ident[2] != 'L'  || ehdr->e_ident[3] != 'F') {
         print("process: invalid ELF\n");
         return 0;
     }
 
-    // allocate process struct
+    if (ehdr->e_phoff + (uint64_t)ehdr->e_phnum * sizeof(Elf64_Phdr) > size) {
+        print("process: program headers outside ELF buffer\n");
+        return 0;
+    }
+
     Process* proc = (Process*)pmm_alloc_page();
     if (!proc) return 0;
 
     proc->pid           = next_pid++;
     proc->address_space = vmm_create_address_space();
-    proc->entry         = ehdr->e_entry;
+    if (!proc->address_space) return 0;
+    proc->entry = ehdr->e_entry;
 
-    // load segments
     Elf64_Phdr* phdrs = (Elf64_Phdr*)((uint8_t*)elf_data + ehdr->e_phoff);
 
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
         Elf64_Phdr* ph = &phdrs[i];
         if (ph->p_type != PT_LOAD) continue;
 
+        if (ph->p_offset + ph->p_filesz > size) {
+            print("process: segment outside ELF buffer\n");
+            return 0;
+        }
+
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
         if (ph->p_flags & PF_W) flags |= VMM_FLAG_WRITE;
+        if (!(ph->p_flags & 0x1)) flags |= VMM_FLAG_NX;
 
-        // map pages for this segment
-        uint64_t vaddr = ph->p_vaddr & ~0xFFFULL;  // align down
+        uint64_t vaddr = ph->p_vaddr & ~0xFFFULL;
         uint64_t vend  = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
 
         for (uint64_t va = vaddr; va < vend; va += 0x1000) {
             void* page = pmm_alloc_page();
             if (!page) {
-                print("process: out of memory\n");
+                print("process: out of memory at va=");
+                print_hex(va); print("\n");
                 return 0;
             }
-            // zero the page
-            uint8_t* p = (uint8_t*)page;
-            for (int j = 0; j < 4096; j++) p[j] = 0;
-
+            // page is a physical address, but identity-mapped via pml4[0]
+            // so we can access it directly as a virtual address
+            uint8_t* vpage = (uint8_t*)page;
+            for (int j = 0; j < 4096; j++) vpage[j] = 0;
             vmm_map(proc->address_space, va, (uint64_t)page, flags);
         }
 
-        // copy segment data
-        // src is in kernel memory (identity mapped)
-        // dst virtual address — access through identity map of physical page
+        // copy data byte by byte via physical address
         uint8_t* src = (uint8_t*)elf_data + ph->p_offset;
-        uint8_t* dst = (uint8_t*)ph->p_vaddr;
-
-        // we need to copy via physical address
-        // walk page tables to get physical address for each page
         for (uint64_t off = 0; off < ph->p_filesz; off++) {
             uint64_t va   = ph->p_vaddr + off;
             uint64_t phys = vmm_virt_to_phys(proc->address_space, va);
-            uint64_t page_off = va & 0xFFF;
-            ((uint8_t*)phys)[page_off] = src[off];
+            if (!phys) {
+                print("process: virt_to_phys failed for va=");
+                print_hex(va); print("\n");
+                return 0;
+            }
+            // phys is physical address, identity-mapped via pml4[0]
+            uint8_t* vaddr_kernel = (uint8_t*)(phys);
+            vaddr_kernel[0] = src[off];
         }
     }
 
-    // allocate user stack
     for (int i = 0; i < PROCESS_STACK_PAGES; i++) {
         void* page = pmm_alloc_page();
-        uint8_t* p = (uint8_t*)page;
-        for (int j = 0; j < 4096; j++) p[j] = 0;
+        if (!page) return 0;
+        // page is physical address, identity-mapped via pml4[0]
+        uint8_t* vpage = (uint8_t*)page;
+        for (int j = 0; j < 4096; j++) vpage[j] = 0;
         uint64_t va = PROCESS_STACK_VIRT - (uint64_t)(i + 1) * 0x1000;
         vmm_map(proc->address_space, va,
                 (uint64_t)page,
@@ -113,48 +131,82 @@ Process* process_create_from_elf(void* elf_data, uint64_t size)
     }
 
     proc->user_rsp = PROCESS_STACK_VIRT;
-
-    print("process: created PID ");
-    print_dec(proc->pid);
-    print(" entry=");
-    print_hex(proc->entry);
-    print("\n");
-
+    print("process: created PID "); print_dec(proc->pid); print("\n");
     return proc;
 }
 
+// void process_run(Process* p)
+// {
+//     uint64_t entry   = p->entry;
+//     uint64_t user_sp = p->user_rsp;
+
+//     vmm_switch(p->address_space);
+
+//     print("s");
+
+//     __asm__ volatile (
+//         // set user data segments
+//         "mov $0x23, %%rax\n"
+//         "mov %%rax, %%ds\n"
+//         "mov %%rax, %%es\n"
+//         "mov %%rax, %%fs\n"
+//         "mov %%rax, %%gs\n"
+
+//         // build iretq frame on stack:
+//         // SS, RSP, RFLAGS, CS, RIP
+//         "push $0x23\n"          // SS  = user data (0x20 | 3)
+//         "push %[rsp]\n"         // RSP = user stack
+//         "push $0x202\n"         // RFLAGS = IF set + reserved bit
+//         "push $0x1B\n"          // CS  = user code (0x18 | 3)
+//         "push %[rip]\n"         // RIP = entry point
+//         "iretq\n"
+//         :
+//         : [rip]"r"(entry), [rsp]"r"(user_sp)
+//         : "rax"
+//     );
+// }
 void process_run(Process* p)
 {
-    // update TSS RSP0 with kernel stack for this process
-    // (when this process makes a syscall, CPU switches to RSP0)
-    extern void tss_set_rsp0(uint64_t rsp);
-    // we reuse the percpu syscall stack — fine for now
-    // (will be per-process stack in scheduler)
+    extern PerCPU percpu_data;
+    uint64_t user_cr3 = (uint64_t)p->address_space->pml4;
+    percpu_data.user_cr3 = user_cr3;
 
-    // switch to process address space
-    vmm_switch(p->address_space);
+    uint64_t entry   = p->entry;
+    uint64_t user_sp = p->user_rsp;
 
-    // jump to ring 3
-    // push user SS, user RSP, RFLAGS, user CS, user RIP
-    // then iretq
+    print("[process_run] launching user code at "); print_hex(entry); 
+    print(" with stack at "); print_hex(user_sp); 
+    print(" cr3="); print_hex(user_cr3); print("\n"); 
+    display_flush();
+
+    // Use iretq which properly handles all aspects of ring transition
+    // Build frame on kernel stack, then switch CR3 and iretq
     __asm__ volatile (
-        "mov $0x23, %%ax\n"     // user data selector (0x20 | 3)
-        "mov %%ax, %%ds\n"
-        "mov %%ax, %%es\n"
-        "mov %%ax, %%fs\n"
-        "mov %%ax, %%gs\n"
-
-        "push $0x23\n"          // SS  = user data
-        "push %0\n"             // RSP = user stack
-        "pushf\n"               // RFLAGS
-        "pop %%rax\n"
-        "or $0x200, %%rax\n"    // set IF (enable interrupts in user mode)
-        "push %%rax\n"
+        // Build iretq frame on kernel stack:
+        // This frame will be popped after CR3 switch
+        // Order: RIP, CS, RFLAGS, RSP, SS
+        "push $0x23\n"          // SS  = user data (0x20 | 3)
+        "push %[rsp]\n"         // RSP = user stack pointer
+        "push $0x202\n"         // RFLAGS = IF set, reserved bit
         "push $0x1B\n"          // CS  = user code (0x18 | 3)
-        "push %1\n"             // RIP = entry point
+        "push %[rip]\n"         // RIP = entry point
+        
+        // Now switch CR3
+        "mov %[cr3], %%rax\n"
+        "mov %%rax, %%cr3\n"
+        
+        // iretq will:
+        // 1. Pop RIP
+        // 2. Pop CS (changes to user mode)
+        // 3. Pop RFLAGS
+        // 4. Pop RSP (sets user stack)
+        // 5. Pop SS
+        // 6. Jump to user code
         "iretq\n"
         :
-        : "r"(p->user_rsp), "r"(p->entry)
-        : "rax"
+        : [cr3]"r"(user_cr3), [rip]"r"(entry), [rsp]"r"(user_sp)
+        : "rax", "memory"
     );
+    
+    // Never reached
 }

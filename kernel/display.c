@@ -65,7 +65,8 @@ static void scroll(void)
         d64[i] = s64[i];
 
     for (uint32_t y = screen_h - 10; y < screen_h; y++)
-        for (uint32_t x = 0; x < screen_w; x++)
+        // for (uint32_t x = 0; x < screen_w; x++)
+        for (uint32_t x = 0; x < pitch; x++)
             sb[y * pitch + x] = bg_color;
 
     cursor_y -= 10;
@@ -95,7 +96,8 @@ uint32_t display_get_pitch(void)  { return pitch; }
 
 void clear_screen() {
     for (uint32_t y = 0; y < screen_h; y++)
-        for (uint32_t x = 0; x < screen_w; x++)
+        // for (uint32_t x = 0; x < screen_w; x++)
+        for (uint32_t x = 0; x < pitch; x++)
             fb[y * pitch + x] = bg_color;
 }
 
@@ -103,6 +105,7 @@ void clear_screen() {
 //     fb[y * pitch + x] = color;
 // }
 static void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
+    if (x >= screen_w || y >= screen_h) return;
     if (sb) {
         sb[y * pitch + x] = color;
         mark_dirty(y);

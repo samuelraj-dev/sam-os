@@ -22,6 +22,7 @@ SECTIONS
     .data : ALIGN(4K)
     {
         *(.data*)
+        *(.kernel_data*)
     }
 
     .bss : ALIGN(4K)

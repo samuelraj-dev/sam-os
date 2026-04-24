@@ -205,6 +205,28 @@ static int bitmap_test(uint64_t page_index) {
     return bitmap[page_index / 8] & (1 << (page_index % 8));
 }
 
+static void reserve_page(uint64_t page)
+{
+    if (page >= total_pages)
+        return;
+    if (!bitmap_test(page)) {
+        bitmap_set(page);
+        free_pages--;
+    }
+}
+
+static void reserve_range(uint64_t start, uint64_t bytes)
+{
+    if (bytes == 0)
+        return;
+
+    uint64_t start_page = start / PAGE_SIZE;
+    uint64_t end_page = (start + bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    for (uint64_t p = start_page; p < end_page; p++)
+        reserve_page(p);
+}
+
 void pmm_init(BootInfo* bootInfo) {
     uint8_t*  mmap  = (uint8_t*)bootInfo->memory_map;
     uint64_t  dsize = bootInfo->memory_map_descriptor_size;
@@ -245,26 +267,51 @@ void pmm_init(BootInfo* bootInfo) {
     uint64_t k_start = KERNEL_PHYS_BASE / PAGE_SIZE;
     uint64_t k_end   = (kernel_end_phys + PAGE_SIZE - 1) / PAGE_SIZE;
     for (uint64_t p = k_start; p < k_end; p++)
-        if (!bitmap_test(p)) { bitmap_set(p); free_pages--; }
+        reserve_page(p);
 
     // mark page tables used
     uint64_t pt_start = k_end;
     uint64_t pt_end   = paging_arena_end / PAGE_SIZE;
     for (uint64_t p = pt_start; p < pt_end; p++)
-        if (!bitmap_test(p)) { bitmap_set(p); free_pages--; }
+        reserve_page(p);
 
     // mark bitmap itself used
     uint64_t bm_start = paging_arena_end / PAGE_SIZE;
     uint64_t bm_end   = (paging_arena_end + bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE;
     for (uint64_t p = bm_start; p < bm_end; p++)
-        if (!bitmap_test(p)) { bitmap_set(p); free_pages--; }
+        reserve_page(p);
 
     // never allocate page 0
-    if (!bitmap_test(0)) { bitmap_set(0); free_pages--; }
+    reserve_page(0);
+
+    // protect low memory — first 16 pages (64KB)
+    for (uint64_t p = 1; p < 16; p++)
+        reserve_page(p);
+
+    uint64_t fb_bytes = (uint64_t)bootInfo->height *
+                        (uint64_t)bootInfo->pixels_per_scanline * 4;
+    reserve_range((uint64_t)bootInfo->framebuffer, fb_bytes);
+    reserve_range((uint64_t)bootInfo->rsdp, PAGE_SIZE);
+
+    // ACPI, runtime, and MMIO descriptors are not freed above, but reserving
+    // them explicitly documents the ownership rule and protects odd firmware maps.
+    for (uint64_t off = 0; off < bootInfo->memory_map_size; off += dsize) {
+        EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(mmap + off);
+        if (desc->Type == 5 || desc->Type == 6 ||
+            desc->Type == 9 || desc->Type == 10 || desc->Type == 11)
+            reserve_range(desc->PhysicalStart, desc->NumberOfPages * PAGE_SIZE);
+    }
 
     print("PMM: free RAM: ");
     print_dec(free_pages * PAGE_SIZE / (1024 * 1024));
     print(" MB\n");
+
+    print("PMM: bitmap at: "); print_hex((uint64_t)bitmap); print("\n");
+    print("PMM: paging_arena_end: "); print_hex(paging_arena_end); print("\n");
+    print("PMM: kernel phys: ");
+    print_hex(KERNEL_PHYS_BASE); print(" - ");
+    uint64_t kend_phys = ((uint64_t)&_kernel_end - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE);
+    print_hex(kend_phys); print("\n");
 }
 
 // ── alloc ────────────────────────────────────────────────
@@ -282,7 +329,10 @@ void* pmm_alloc_page(void) {
 // pmm.c
 void* pmm_alloc_pages(uint64_t count)
 {
-    for (uint64_t i = 1; i < total_pages - count; i++) {
+    if (count == 0 || count > total_pages)
+        return 0;
+
+    for (uint64_t i = 1; i <= total_pages - count; i++) {
         int found = 1;
         for (uint64_t j = i; j < i + count; j++) {
             if (bitmap_test(j)) { 

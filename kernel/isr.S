@@ -77,7 +77,6 @@ isr45:  pushq $0; pushq $45; jmp isr_common
 isr46:  pushq $0; pushq $46; jmp isr_common
 .global isr47
 isr47:  pushq $0; pushq $47; jmp isr_common
-
 .extern interrupt_handler
 isr_common:
     pushq %rax
