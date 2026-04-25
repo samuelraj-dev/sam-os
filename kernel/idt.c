@@ -1,14 +1,12 @@
 #include "idt.h"
 #include "gdt.h"
 #include "irq.h"
-#include "timer.h"
 #include "keyboard.h"
 #include "display.h"
 
 static IDTEntry idt[256];
 static IDTDescriptor idtr;
 
-// declare all ISR stubs from isr.asm
 extern void isr0(void);  extern void isr1(void);
 extern void isr2(void);  extern void isr3(void);
 extern void isr4(void);  extern void isr5(void);
@@ -44,15 +42,10 @@ static void set_entry(uint8_t vector, void* handler,
 
 void idt_init(void)
 {
-    // zero all entries first
     for (int i = 0; i < 256; i++) {
         uint8_t* p = (uint8_t*)&idt[i];
         for (uint64_t j = 0; j < sizeof(IDTEntry); j++) p[j] = 0;
     }
-
-    // 0x8E = present, ring 0, interrupt gate (clears IF on entry)
-    // 0xEF = present, ring 0, trap gate    (keeps IF on entry)
-    // use interrupt gates for hardware IRQs, trap gates for exceptions
 
     set_entry(0,  isr0,  0, 0x8E);
     set_entry(1,  isr1,  0, 0x8E);
@@ -62,7 +55,7 @@ void idt_init(void)
     set_entry(5,  isr5,  0, 0x8E);
     set_entry(6,  isr6,  0, 0x8E);
     set_entry(7,  isr7,  0, 0x8E);
-    set_entry(8,  isr8,  1, 0x8E); // double fault — use IST1
+    set_entry(8,  isr8,  1, 0x8E);  // double fault — IST1
     set_entry(9,  isr9,  0, 0x8E);
     set_entry(10, isr10, 0, 0x8E);
     set_entry(11, isr11, 0, 0x8E);
@@ -76,9 +69,8 @@ void idt_init(void)
     set_entry(19, isr19, 0, 0x8E);
     set_entry(20, isr20, 0, 0x8E);
 
-    // IRQs
-    // for (int i = 32; i < 48; i++)
-    //     set_entry(i, (&isr32)[i - 32], 0, 0x8E);
+    // isr32 (timer) has its own path — calls timer_tick directly
+    // all other IRQs go through isr_common → interrupt_handler
     set_entry(32, isr32, 0, 0x8E);
     set_entry(33, isr33, 0, 0x8E);
     set_entry(34, isr34, 0, 0x8E);
@@ -121,7 +113,6 @@ static const char* exception_names[] = {
 void interrupt_handler(InterruptFrame* frame)
 {
     if (frame->vector < 32) {
-        // CPU exception — print and halt
         print("\n--- EXCEPTION ---\n");
         if (frame->vector <= 20)
             print(exception_names[frame->vector]);
@@ -136,33 +127,31 @@ void interrupt_handler(InterruptFrame* frame)
             print("\nCR2:    "); print_hex(cr2);
         }
         print("\n--- HALTED ---\n");
+        display_flush();
         while (1) __asm__ volatile ("hlt");
     }
 
-    // hardware IRQ
     uint8_t irq = frame->vector - 32;
 
-    // check for spurious IRQ
+    // spurious IRQ check (IRQ7)
     if (irq == 7) {
-        // check if real by reading ISR
-        uint8_t isr;
+        uint8_t isr_val;
         __asm__ volatile (
             "mov $0x0B, %%al\n"
             "out %%al, $0x20\n"
             "in $0x20, %%al\n"
-            : "=a"(isr)
+            : "=a"(isr_val)
         );
-        if (!(isr & 0x80)) return;  // spurious, don't send EOI
+        if (!(isr_val & 0x80)) return;
     }
 
-    int send_eoi = 1;
-
     switch (irq) {
-        case 0: timer_handler();    break;
-        case 1: keyboard_handler(); break;
+        // IRQ0 (timer) handled entirely in isr32 — never reaches here
+        case 1:  keyboard_handler(); break;
         default: break;
     }
 
-    if (send_eoi)
+    // IRQ0 EOI already sent by timer_tick in isr32
+    if (irq != 0)
         irq_send_eoi(irq);
 }

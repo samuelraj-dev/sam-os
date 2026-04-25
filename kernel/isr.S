@@ -17,25 +17,25 @@ isr5:   pushq $0; pushq $5;  jmp isr_common
 isr6:   pushq $0; pushq $6;  jmp isr_common
 .global isr7
 isr7:   pushq $0; pushq $7;  jmp isr_common
-.global isr8          /* double fault - error code pushed by CPU */
+.global isr8
 isr8:   pushq $8;             jmp isr_common
 .global isr9
 isr9:   pushq $0; pushq $9;  jmp isr_common
-.global isr10         /* error code pushed by CPU */
+.global isr10
 isr10:  pushq $10;            jmp isr_common
-.global isr11         /* error code pushed by CPU */
+.global isr11
 isr11:  pushq $11;            jmp isr_common
-.global isr12         /* error code pushed by CPU */
+.global isr12
 isr12:  pushq $12;            jmp isr_common
-.global isr13         /* error code pushed by CPU */
+.global isr13
 isr13:  pushq $13;            jmp isr_common
-.global isr14         /* error code pushed by CPU */
+.global isr14
 isr14:  pushq $14;            jmp isr_common
 .global isr15
 isr15:  pushq $0; pushq $15; jmp isr_common
 .global isr16
 isr16:  pushq $0; pushq $16; jmp isr_common
-.global isr17         /* error code pushed by CPU */
+.global isr17
 isr17:  pushq $17;            jmp isr_common
 .global isr18
 isr18:  pushq $0; pushq $18; jmp isr_common
@@ -44,9 +44,60 @@ isr19:  pushq $0; pushq $19; jmp isr_common
 .global isr20
 isr20:  pushq $0; pushq $20; jmp isr_common
 
-/* IRQs - no error codes */
+/* IRQs */
+/* isr32 = timer — has its own path for task switching */
 .global isr32
-isr32:  pushq $0; pushq $32; jmp isr_common
+isr32:
+    pushq $0        /* fake error code */
+    pushq $32       /* vector */
+
+    pushq %rax
+    pushq %rbx
+    pushq %rcx
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+    pushq %rbp
+    pushq %r8
+    pushq %r9
+    pushq %r10
+    pushq %r11
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+
+    /* call timer_tick(current_rsp) — returns new_rsp or 0 */
+    movq %rsp, %rdi
+    call timer_tick
+
+    /* if rax == 0: no switch, restore same stack */
+    /* if rax != 0: switch to new task stack      */
+    testq %rax, %rax
+    jz    .no_switch
+    movq  %rax, %rsp    /* load new task RSP */
+
+.no_switch:
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rbp
+    popq %rdi
+    popq %rsi
+    popq %rdx
+    popq %rcx
+    popq %rbx
+    popq %rax
+
+    addq $16, %rsp      /* pop vector and error code */
+    iretq
+
+/* all other IRQs use isr_common */
 .global isr33
 isr33:  pushq $0; pushq $33; jmp isr_common
 .global isr34
@@ -77,6 +128,7 @@ isr45:  pushq $0; pushq $45; jmp isr_common
 isr46:  pushq $0; pushq $46; jmp isr_common
 .global isr47
 isr47:  pushq $0; pushq $47; jmp isr_common
+
 .extern interrupt_handler
 isr_common:
     pushq %rax

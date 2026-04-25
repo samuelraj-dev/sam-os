@@ -43,27 +43,33 @@ void keyboard_init(void)
     print("Keyboard initialized\n");
 }
 
+// void keyboard_handler(void)
+// {
+//     uint8_t scancode = inb(0x60);
+    
+//     // ignore key releases (bit 7 set)
+//     if (scancode & 0x80)
+//         return;
+
+//     if (scancode < 128 && scancode_map[scancode]) {
+
+//         // char str[2] = { scancode_map[scancode], 0 };
+//         // print(str);
+
+//         char c = scancode_map[scancode];
+
+//         if (c == '\b') {
+//             input_backspace();
+//         } else if (c == '\n') {
+//             input_submit();
+//         } else if (c) {
+//             input_putc(c);
+//         }
+//     }
+// }
+
 void keyboard_handler(void)
 {
-    uint8_t scancode = inb(0x60);
-    
-    // ignore key releases (bit 7 set)
-    if (scancode & 0x80)
-        return;
-
-    if (scancode < 128 && scancode_map[scancode]) {
-
-        // char str[2] = { scancode_map[scancode], 0 };
-        // print(str);
-
-        char c = scancode_map[scancode];
-
-        if (c == '\b') {
-            input_backspace();
-        } else if (c == '\n') {
-            input_submit();
-        } else if (c) {
-            input_putc(c);
-        }
-    }
+    // temporarily disable input system
+    inb(0x60); // just read to clear buffer
 }

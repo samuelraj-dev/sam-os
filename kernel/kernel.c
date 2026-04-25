@@ -13,6 +13,7 @@
 #include "klog.h"
 #include "kmalloc.h"
 #include "acpi.h"
+#include "scheduler/task.h"
 #include "types.h"
 
 #define SCREEN_BG 0x00303030
@@ -227,26 +228,39 @@ void kernel_main(BootInfo* bootInfo)
     run_memory_smoke_tests();
     run_heap_smoke_tests();
     acpi_init(bootInfo);
+    // enable_interrupts();
+
+    task_init();
+    task_create(task1);
+    task_create(task2);
     enable_interrupts();
-    
+
     display_clear();
-    print("\nSamOS ready. Timer + keyboard IRQs enabled.\n");
+    print("SamOS ready. Scheduler starting.\n");
     display_flush();
-    print("sam> ");
 
-    uint64_t last_tick_report = 0;
-    while (1) {
-        __asm__ volatile ("hlt");
+    schedule();
+    halt_forever();
 
-        if (timer_flush_needed())
-            display_flush();
+    // uint64_t last_tick_report = 0;
+    // while (1) {
+    //     __asm__ volatile ("hlt");
 
-        uint64_t ticks = timer_get_ticks();
-        if (ticks >= last_tick_report + TIMER_HZ) {
-            last_tick_report = ticks;
-            // print("tick: ");
-            // print_dec(ticks);
-            // print("\n");
-        }
-    }
+    //     if (timer_flush_needed())
+    //         display_flush();
+
+    //     // if (need_schedule) {
+    //     //     need_schedule = 0;
+    //     //     schedule();
+    //     // }
+
+
+    //     // uint64_t ticks = timer_get_ticks();
+    //     // if (ticks >= last_tick_report + TIMER_HZ) {
+    //     //     last_tick_report = ticks;
+    //     //     // print("tick: ");
+    //     //     // print_dec(ticks);
+    //     //     // print("\n");
+    //     // }
+    // }
 }

@@ -3,9 +3,9 @@
 
 #include "types.h"
 
-void timer_init(uint32_t frequency);
-int timer_flush_needed(void);
+void     timer_init(uint32_t frequency);
+uint64_t timer_tick(uint64_t current_rsp);
+int      timer_flush_needed(void);
 uint64_t timer_get_ticks(void);
-void timer_handler(void);
 
 #endif
