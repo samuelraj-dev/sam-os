@@ -84,8 +84,10 @@
 
 #define PAGE_PRESENT  (1ULL << 0)
 #define PAGE_WRITE    (1ULL << 1)
+#define PAGE_PCD      (1ULL << 4)
 #define PAGE_HUGE     (1ULL << 7)
 #define PAGE_NX       (1ULL << 63)
+#define IDENTITY_MIN_4G (1ULL << 32)
 
 static uint64_t* pml4;
 static uint64_t* pdpt;
@@ -139,6 +141,12 @@ void paging_init(BootInfo* bootInfo) {
                       bootInfo->height * bootInfo->pixels_per_scanline * 4;
     uint64_t max_memory = ram_top;
     if (fb_end > max_memory) max_memory = fb_end;
+
+    // Keep identity map large enough for common MMIO windows (LAPIC/IOAPIC).
+    // LAPIC=0xFEE00000 and IOAPIC=0xFEC00000 are below 4 GiB.
+    if (max_memory < IDENTITY_MIN_4G)
+        max_memory = IDENTITY_MIN_4G;
+
     max_memory = (max_memory + PSE_2MB - 1) & ~(uint64_t)(PSE_2MB - 1);
 
     uint64_t addr = 0;
@@ -147,8 +155,10 @@ void paging_init(BootInfo* bootInfo) {
         // pdpt[pdpt_i] = (uint64_t)pd | 0x3;
         pdpt[pdpt_i] = (uint64_t)pd | PAGE_PRESENT | PAGE_WRITE;
         for (uint64_t pd_i = 0; pd_i < ENTRIES && addr < max_memory; pd_i++) {
-            // pd[pd_i] = addr | 0x83;
-            pd[pd_i] = addr | PAGE_PRESENT | PAGE_WRITE | PAGE_HUGE | PAGE_NX;
+            uint64_t page_flags = PAGE_PRESENT | PAGE_WRITE | PAGE_HUGE | PAGE_NX;
+            if (addr == 0xFEC00000ULL || addr == 0xFEE00000ULL)
+                page_flags |= PAGE_PCD;
+            pd[pd_i] = addr | page_flags;
             addr += PSE_2MB;
         }
     }

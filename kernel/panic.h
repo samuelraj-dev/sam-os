@@ -3,5 +3,6 @@
 
 void panic(const char* message);
 void kassert(int condition, const char* message);
+const char* panic_get_last(void);
 
 #endif

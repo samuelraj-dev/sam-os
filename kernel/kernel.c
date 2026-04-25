@@ -13,7 +13,10 @@
 #include "klog.h"
 #include "kmalloc.h"
 #include "acpi.h"
+#include "rtc.h"
 #include "scheduler/task.h"
+#include "process.h"
+#include "syscall_abi.h"
 #include "types.h"
 
 #define SCREEN_BG 0x00303030
@@ -124,6 +127,7 @@ static void init_irq_devices(void)
     irq_controller_init();
     timer_init(TIMER_HZ);
     keyboard_init();
+    rtc_init();
 }
 
 static void init_memory(BootInfo* bootInfo)
@@ -209,6 +213,19 @@ static void enable_interrupts(void)
     __asm__ volatile ("sti");
 }
 
+static void print_irq_boot_banner(void)
+{
+    print("IRQ diagnostics:\n");
+    print("  backend: ");
+    print(irq_controller_name());
+    print("\n");
+    print("  vector map: IRQ0->0x20 IRQ1->0x21\n");
+    print("  timer source: PIT ");
+    print_dec((uint64_t)timer_get_frequency());
+    print(" Hz\n");
+    irq_dump_routes();
+}
+
 void kernel_main(BootInfo* bootInfo)
 {
     if (!bootInfo)
@@ -228,39 +245,34 @@ void kernel_main(BootInfo* bootInfo)
     run_memory_smoke_tests();
     run_heap_smoke_tests();
     acpi_init(bootInfo);
-    // enable_interrupts();
+    irq_try_enable_apic();
+    print("IRQ mode: ");
+    print(irq_controller_name());
+    print("\n");
+    print_irq_boot_banner();
+    if (!irq_backend_health())
+        klog_warn("IRQ backend health has faults; safe-mode fallback recommended next boot");
 
     task_init();
-    task_create(task1);
-    task_create(task2);
+    process_init();
+
+    int shell_id = task_create_kernel(shell_task);
+    int idle_id  = task_create_kernel(idle_task);
+    (void)idle_id;
+
+    // tell keyboard which task to wake on keypress
+    keyboard_set_shell_task(shell_id);
+
+    // Boot two user processes for v1 multiprogram userspace.
+    process_spawn_builtin(SPAWN_IMAGE_HELLO);
+    process_spawn_builtin(SPAWN_IMAGE_BURN);
+
     enable_interrupts();
 
     display_clear();
-    print("SamOS ready. Scheduler starting.\n");
+    print("SamOS\n");
     display_flush();
 
-    schedule();
+    schedule();      // enters shell_task — never returns
     halt_forever();
-
-    // uint64_t last_tick_report = 0;
-    // while (1) {
-    //     __asm__ volatile ("hlt");
-
-    //     if (timer_flush_needed())
-    //         display_flush();
-
-    //     // if (need_schedule) {
-    //     //     need_schedule = 0;
-    //     //     schedule();
-    //     // }
-
-
-    //     // uint64_t ticks = timer_get_ticks();
-    //     // if (ticks >= last_tick_report + TIMER_HZ) {
-    //     //     last_tick_report = ticks;
-    //     //     // print("tick: ");
-    //     //     // print_dec(ticks);
-    //     //     // print("\n");
-    //     // }
-    // }
 }

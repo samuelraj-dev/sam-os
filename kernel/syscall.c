@@ -1,78 +1,117 @@
 #include "syscall.h"
+#include "syscall_abi.h"
+#include "scheduler/task.h"
+#include "process.h"
 #include "display.h"
 #include "vmm.h"
 
-#define MSR_EFER   0xC0000080
-#define MSR_STAR   0xC0000081
-#define MSR_LSTAR  0xC0000082
-#define MSR_SFMASK 0xC0000084
+#define USER_TOP 0x0000800000000000ULL
 
-static inline void wrmsr(uint32_t msr, uint64_t val) {
-    __asm__ volatile ("wrmsr"
-        :: "c"(msr), "a"((uint32_t)val), "d"((uint32_t)(val >> 32)));
-}
-
-static inline uint64_t rdmsr(uint32_t msr) {
-    uint32_t lo, hi;
-    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-    return ((uint64_t)hi << 32) | lo;
-}
-
-// called from syscall_entry.S
-// rdi=num, rsi=arg0, rdx=arg1, rcx=arg2
-// At this point, CR3 has already been switched to kernel in syscall_entry.S
-// So we can safely access kernel memory and framebuffer
-void syscall_handler(uint64_t num, uint64_t arg0,
-                     uint64_t arg1, uint64_t arg2)
+static uint64_t ret_err(uint64_t errno_val)
 {
-    (void)arg2;
-    
-    print("[syscall ");
-    print_dec(num);
-    print("] ");
-    display_flush();
-    
-    switch (num) {
-        case SYS_WRITE: {
-            char* str = (char*)arg0;
-            for (uint64_t i = 0; i < arg1; i++) {
-                char c[2] = { str[i], 0 };
-                print(c);
-            }
-            display_flush();
-            break;
-        }
-        case SYS_EXIT:
-            print("[process exited]\n");
-            display_flush();
-            while(1) __asm__ volatile ("hlt");
-            break;
+    return 0ULL - errno_val;
+}
+
+static int user_range_valid(AddressSpace* as, uint64_t start, uint64_t len)
+{
+    if (!as) return 0;
+    if (len == 0) return 1;
+    if (start >= USER_TOP) return 0;
+    if (start + len < start) return 0;
+    if (start + len > USER_TOP) return 0;
+
+    uint64_t from = start & ~0xFFFULL;
+    uint64_t to = (start + len - 1) & ~0xFFFULL;
+
+    for (uint64_t va = from; va <= to; va += 0x1000) {
+        if (!vmm_virt_to_phys(as, va))
+            return 0;
     }
+
+    return 1;
 }
 
-void syscall_init(void)
+static uint64_t sys_write(InterruptFrame* frame)
 {
-    uint64_t efer = rdmsr(MSR_EFER);
-    efer |= 1;  // SCE bit only — don't clear NXE
-    wrmsr(MSR_EFER, efer);
+    Task* t = task_current();
+    if (!t || !t->is_user) return ret_err(1);
 
-    uint64_t efer_check2 = rdmsr(MSR_EFER);
-    print("EFER after SCE: "); print_hex(efer_check2); print("\n"); display_flush();
+    uint64_t user_ptr = frame->rbx;
+    uint64_t len = frame->rcx;
 
-    // STAR:
-    // bits 47:32 = kernel CS = 0x08
-    // bits 63:48 = user CS base = 0x18
-    // sysret does: CS = 0x18|3 = 0x1B, SS = 0x20|3 = 0x23
-    uint64_t star = ((uint64_t)0x0008 << 32) |
-                    ((uint64_t)0x0018 << 48);
-    wrmsr(MSR_STAR, star);
+    if (len > 4096) return ret_err(22);
+    if (!user_range_valid(t->address_space, user_ptr, len))
+        return ret_err(14);
 
-    // LSTAR = syscall entry point
-    extern void syscall_entry(void);
-    wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
+    char* s = (char*)user_ptr;
+    for (uint64_t i = 0; i < len; i++) {
+        char out[2] = { s[i], 0 };
+        print(out);
+    }
+    display_flush();
 
-    // SFMASK = clear IF on syscall entry (disable interrupts)
-    wrmsr(MSR_SFMASK, (1 << 9));
+    return len;
+}
 
-    print("Syscall initialized\n");
+static uint64_t sys_exit(InterruptFrame* frame)
+{
+    int code = (int)(frame->rbx & 0xFFFFFFFFULL);
+    int pid = task_current_pid();
+    process_task_exited(pid, code);
+
+    Task* t = task_current();
+    if (t) {
+        t->exit_code = code;
+        t->state = TASK_ZOMBIE;
+    }
+
+    return ret_err(11);
+}
+
+static uint64_t sys_yield(void)
+{
+    return 0;
+}
+
+static uint64_t sys_spawn(InterruptFrame* frame)
+{
+    int image_id = (int)(frame->rbx & 0xFFFFFFFFULL);
+    int pid = process_spawn_builtin(image_id);
+    if (pid < 0)
+        return ret_err(12);
+    return (uint64_t)pid;
+}
+
+static uint64_t sys_getpid(void)
+{
+    int pid = task_current_pid();
+    if (pid < 0) return ret_err(3);
+    return (uint64_t)pid;
+}
+
+uint64_t syscall_dispatch(InterruptFrame* frame)
+{
+    if (!frame) return 0;
+
+    uint64_t ret = ret_err(38);
+
+    switch (frame->rax) {
+        case SYS_WRITE:  ret = sys_write(frame); break;
+        case SYS_EXIT:   ret = sys_exit(frame); break;
+        case SYS_YIELD:  ret = sys_yield(); break;
+        case SYS_SPAWN:  ret = sys_spawn(frame); break;
+        case SYS_GETPID: ret = sys_getpid(); break;
+        default:         ret = ret_err(38); break;
+    }
+
+    frame->rax = ret;
+
+    if (frame->rax == ret_err(11) || frame->rax == 0) {
+        Task* t = task_current();
+        if (t && t->state != TASK_WAITING && t->state != TASK_ZOMBIE)
+            t->state = TASK_RUNNABLE;
+        return task_schedule_from_interrupt(frame);
+    }
+
+    return 0;
 }

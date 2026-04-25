@@ -152,6 +152,24 @@ void print_char(char c)
         return;
     }
 
+    if (c == '\r') {
+        cursor_x = 0;
+        return;
+    }
+
+    if (c == '\b') {
+        if (cursor_x >= 8) {
+            cursor_x -= 8;
+        } else if (cursor_y >= 10) {
+            cursor_y -= 10;
+            cursor_x = (screen_w >= 8) ? (screen_w - 8) : 0;
+        } else {
+            return;
+        }
+        draw_char(' ', cursor_x, cursor_y);
+        return;
+    }
+
     draw_char(c, cursor_x, cursor_y);
     cursor_x += 8;
 

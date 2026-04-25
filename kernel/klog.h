@@ -11,5 +11,6 @@ void klog_panic(const char* message);
 void klog_hex(uint64_t value);
 void klog_dec(uint64_t value);
 void klog_newline(void);
+void klog_dump_recent(uint32_t limit);
 
 #endif

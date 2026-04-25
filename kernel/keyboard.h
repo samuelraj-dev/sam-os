@@ -3,21 +3,20 @@
 
 #include "types.h"
 
-// US QWERTY scancode set 1
-// static const char scancode_map[128] = {
-//     0,   0,  '1','2','3','4','5','6','7','8','9','0','-','=', 0,  0,  // 0x00-0x0F
-//     'q','w','e','r','t','y','u','i','o','p','[',']','\n', 0, 'a','s', // 0x10-0x1F
-//     'd','f','g','h','j','k','l',';','\'','`', 0, '\\','z','x','c','v',// 0x20-0x2F
-//     'b','n','m',',','.','/', 0,  '*', 0,  ' ', 0,                     // 0x30-0x3A
-// };
-static const char scancode_map[128] = {
-    0,   0,  '1','2','3','4','5','6','7','8','9','0','-','=', '\b', 0,
-    'q','w','e','r','t','y','u','i','o','p','[',']','\n', 0, 'a','s',
-    'd','f','g','h','j','k','l',';','\'','`', 0, '\\','z','x','c','v',
-    'b','n','m',',','.','/', 0,  '*', 0,  ' ', 0,
-};
+typedef struct {
+    uint8_t left_shift;
+    uint8_t right_shift;
+} KeyboardState;
+
+#define KB_EVENT_UP   ((char)0x11)
+#define KB_EVENT_DOWN ((char)0x12)
 
 void keyboard_init(void);
 void keyboard_handler(void);
+void keyboard_set_shell_task(int id);
+const KeyboardState* keyboard_get_state(void);
+void kb_push(char c);
+char kb_getchar(void);
+int  kb_available(void);
 
 #endif

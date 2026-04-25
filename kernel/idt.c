@@ -3,6 +3,8 @@
 #include "irq.h"
 #include "keyboard.h"
 #include "display.h"
+#include "panic.h"
+#include "scheduler/task.h"
 
 static IDTEntry idt[256];
 static IDTDescriptor idtr;
@@ -26,6 +28,7 @@ extern void isr40(void); extern void isr41(void);
 extern void isr42(void); extern void isr43(void);
 extern void isr44(void); extern void isr45(void);
 extern void isr46(void); extern void isr47(void);
+extern void isr128(void);
 
 static void set_entry(uint8_t vector, void* handler,
                       uint8_t ist, uint8_t type_attr)
@@ -87,6 +90,8 @@ void idt_init(void)
     set_entry(45, isr45, 0, 0x8E);
     set_entry(46, isr46, 0, 0x8E);
     set_entry(47, isr47, 0, 0x8E);
+    // User syscall gate: int 0x80
+    set_entry(128, isr128, 0, 0xEE);
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base  = (uint64_t)&idt;
@@ -110,8 +115,11 @@ static const char* exception_names[] = {
     "Virtualization Fault"
 };
 
-void interrupt_handler(InterruptFrame* frame)
+uint64_t interrupt_handler(InterruptFrame* frame)
 {
+    kassert(frame != 0, "interrupt_handler: null frame");
+    kassert(frame->vector < 256, "interrupt_handler: invalid vector");
+
     if (frame->vector < 32) {
         print("\n--- EXCEPTION ---\n");
         if (frame->vector <= 20)
@@ -121,6 +129,12 @@ void interrupt_handler(InterruptFrame* frame)
         print("\nRIP:    ");  print_hex(frame->rip);
         print("\nRSP:    ");  print_hex(frame->rsp);
         print("\nRFLAGS: "); print_hex(frame->rflags);
+        Task* t = task_current();
+        if (t) {
+            print("\nTID:    "); print_dec((uint64_t)t->tid);
+            print("\nPID:    "); print_dec((uint64_t)t->pid);
+            print("\nCR3:    "); print_hex(t->cr3);
+        }
         if (frame->vector == 14) {
             uint64_t cr2;
             __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
@@ -131,19 +145,14 @@ void interrupt_handler(InterruptFrame* frame)
         while (1) __asm__ volatile ("hlt");
     }
 
+    if (frame->vector == 128) {
+        extern uint64_t syscall_dispatch(InterruptFrame* frame);
+        return syscall_dispatch(frame);
+    }
+
     uint8_t irq = frame->vector - 32;
 
-    // spurious IRQ check (IRQ7)
-    if (irq == 7) {
-        uint8_t isr_val;
-        __asm__ volatile (
-            "mov $0x0B, %%al\n"
-            "out %%al, $0x20\n"
-            "in $0x20, %%al\n"
-            : "=a"(isr_val)
-        );
-        if (!(isr_val & 0x80)) return;
-    }
+    if (irq_is_spurious(irq)) return 0;
 
     switch (irq) {
         // IRQ0 (timer) handled entirely in isr32 — never reaches here
@@ -154,4 +163,6 @@ void interrupt_handler(InterruptFrame* frame)
     // IRQ0 EOI already sent by timer_tick in isr32
     if (irq != 0)
         irq_send_eoi(irq);
+
+    return 0;
 }

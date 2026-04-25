@@ -27,8 +27,13 @@ static uint64_t* get_or_create_table(uint64_t* table,
                                       uint16_t index,
                                       uint64_t flags)
 {
-    if (table[index] & VMM_FLAG_PRESENT)
+    if (table[index] & VMM_FLAG_PRESENT) {
+        // Existing hierarchy entries may come from shared kernel roots.
+        // Upgrade to user-visible when requested so ring3 can traverse.
+        if (flags & VMM_FLAG_USER)
+            table[index] |= VMM_FLAG_USER;
         return (uint64_t*)(table[index] & 0x000FFFFFFFFFF000ULL);  // fix here
+    }
 
     uint64_t* new_table = alloc_page_table();
     table[index] = (uint64_t)new_table | flags | VMM_FLAG_PRESENT;
@@ -88,7 +93,8 @@ AddressSpace* vmm_create_address_space(void)
 
     // Copy identity map (pml4[0]) so kernel can access physical memory
     // (framebuffer, page tables, bootinfo, etc.) after switching CR3
-    as->pml4[0] = kernel_address_space.pml4[0];
+    // Keep low half table pointer, but allow ring3 traversal for user mappings.
+    as->pml4[0] = kernel_address_space.pml4[0] | VMM_FLAG_USER;
 
     // Share kernel high mapping (pml4[511]) for kernel code/data
     as->pml4[511] = kernel_address_space.pml4[511];

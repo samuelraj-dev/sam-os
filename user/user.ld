@@ -2,7 +2,7 @@ ENTRY(_start)
 
 SECTIONS
 {
-    . = 0x400000;    /* standard user load address */
+    . = 0x0000002000000000;    /* userspace VA outside low identity-map huge pages */
 
     .text : {
         *(.text*)

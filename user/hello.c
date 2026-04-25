@@ -1,27 +1,16 @@
-// no libc — everything manual
+#include "syscall.h"
 
-static void syscall_write(const char* str, unsigned long len) {
-    __asm__ volatile (
-        "syscall"
-        :
-        : "D"(0UL),   // rdi = SYS_WRITE
-          "S"(str),   // rsi = arg0 = string pointer
-          "d"(len)    // rdx = arg1 = length
-        : "rcx", "r11", "memory"
-    );
-}
+void _start(void)
+{
+    long pid = sys_getpid();
+    (void)pid;
 
-static void syscall_exit(void) {
-    __asm__ volatile (
-        "syscall"
-        :
-        : "D"(1UL)    // rdi = SYS_EXIT
-        : "rcx", "r11"
-    );
-}
+    sys_write("[hello] userspace online\n", 25);
+    for (int i = 0; i < 8; i++) {
+        sys_write("[hello] tick\n", 13);
+        sys_yield();
+    }
 
-void _start(void) {
-    syscall_write("Hello from userspace!\n", 22);
-    syscall_exit();
-    while(1);  // never reached
+    sys_write("[hello] exit\n", 13);
+    sys_exit(0);
 }

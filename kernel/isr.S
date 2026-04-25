@@ -128,6 +128,8 @@ isr45:  pushq $0; pushq $45; jmp isr_common
 isr46:  pushq $0; pushq $46; jmp isr_common
 .global isr47
 isr47:  pushq $0; pushq $47; jmp isr_common
+.global isr128
+isr128: pushq $0; pushq $128; jmp isr_common
 
 .extern interrupt_handler
 isr_common:
@@ -149,7 +151,11 @@ isr_common:
 
     movq %rsp, %rdi
     call interrupt_handler
+    testq %rax, %rax
+    jz .restore_same
+    movq %rax, %rsp
 
+.restore_same:
     popq %r15
     popq %r14
     popq %r13

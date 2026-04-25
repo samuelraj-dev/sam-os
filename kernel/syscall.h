@@ -2,10 +2,8 @@
 #define SYSCALL_H
 
 #include "types.h"
+#include "idt.h"
 
-#define SYS_WRITE  0
-#define SYS_EXIT   1
-
-void syscall_init(void);
+uint64_t syscall_dispatch(InterruptFrame* frame);
 
 #endif

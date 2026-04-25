@@ -17,12 +17,12 @@ KERNEL_LDFLAGS = -T scripts/linker.ld -nostdlib
 
 USER_CFLAGS = -ffreestanding -fno-stack-protector -fno-pic \
               -fno-pie -no-pie -mno-red-zone -nostdlib -nostdinc \
-              -fno-builtin -O2
+              -fno-builtin -O2 -mcmodel=large
 
 BINDIR = bin
 OBJDIR = build
 
-all: bootloader.efi hello.elf hello.bin hello_blob.o kernel.elf
+all: bootloader.efi hello.elf burn.elf hello.bin burn.bin hello_blob.o burn_blob.o kernel.elf
 
 bootloader.efi: boot/bootloader.c
 	$(CC) $(CFLAGS) boot/bootloader.c -o $(BINDIR)/BOOTX64.EFI $(LDFLAGS) && \
@@ -32,7 +32,7 @@ bootloader.efi: boot/bootloader.c
 debug: debug/main_debug.c
 	$(CC) $(CFLAGS) debug/main_debug.c -o $(BINDIR)/debug.efi $(LDFLAGS)
 
-kernel.elf: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kernel/serial.c kernel/klog.c kernel/panic.c kernel/kmalloc.c kernel/acpi.c kernel/irq.c kernel/pmm.c kernel/paging.c kernel/display.c kernel/gdt.c kernel/tss.c kernel/idt.c kernel/pic.c kernel/timer.c kernel/keyboard.c kernel/input.c kernel/shell.c kernel/string.c kernel/scheduler/task.c kernel/vmm.c kernel/percpu.c kernel/syscall.c kernel/syscall_entry.S kernel/process.c scripts/linker.ld
+kernel.elf: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kernel/serial.c kernel/klog.c kernel/panic.c kernel/kmalloc.c kernel/acpi.c kernel/irq.c kernel/apic.c kernel/rtc.c kernel/pmm.c kernel/paging.c kernel/display.c kernel/gdt.c kernel/tss.c kernel/idt.c kernel/pic.c kernel/timer.c kernel/keyboard.c kernel/shell.c kernel/string.c kernel/scheduler/task.c kernel/vmm.c kernel/percpu.c kernel/syscall.c kernel/process.c scripts/linker.ld
 	$(KERNEL_AS) boot/boot.S -o $(OBJDIR)/boot.o && \
 	$(KERNEL_AS) kernel/isr.S -o $(OBJDIR)/isr.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/kernel.c -o $(OBJDIR)/kernel.o && \
@@ -43,6 +43,8 @@ kernel.elf: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kern
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/kmalloc.c -o $(OBJDIR)/kmalloc.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/acpi.c -o $(OBJDIR)/acpi.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/irq.c -o $(OBJDIR)/irq.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/apic.c -o $(OBJDIR)/apic.o && \
+	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/rtc.c -o $(OBJDIR)/rtc.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/pmm.c -o $(OBJDIR)/pmm.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/paging.c -o $(OBJDIR)/paging.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/display.c -o $(OBJDIR)/display.o && \
@@ -52,16 +54,14 @@ kernel.elf: boot/boot.S kernel/isr.S kernel/kernel.c kernel/font8x8_basic.c kern
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/pic.c -o $(OBJDIR)/pic.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/timer.c -o $(OBJDIR)/timer.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/keyboard.c -o $(OBJDIR)/keyboard.o && \
-	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/input.c -o $(OBJDIR)/input.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/shell.c -o $(OBJDIR)/shell.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/string.c -o $(OBJDIR)/string.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/scheduler/task.c -o $(OBJDIR)/task.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/vmm.c -o $(OBJDIR)/vmm.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/percpu.c -o $(OBJDIR)/percpu.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/syscall.c -o $(OBJDIR)/syscall.o && \
-	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/syscall_entry.S -o $(OBJDIR)/syscall_entry.o && \
 	$(KERNEL_CC) $(KERNEL_CFLAGS) -c kernel/process.c -o $(OBJDIR)/process.o && \
-	$(KERNEL_LD) $(KERNEL_LDFLAGS) $(OBJDIR)/boot.o $(OBJDIR)/isr.o $(OBJDIR)/kernel.o $(OBJDIR)/font8x8_basic.o $(OBJDIR)/serial.o $(OBJDIR)/klog.o $(OBJDIR)/panic.o $(OBJDIR)/kmalloc.o $(OBJDIR)/acpi.o $(OBJDIR)/irq.o $(OBJDIR)/pmm.o $(OBJDIR)/paging.o $(OBJDIR)/display.o $(OBJDIR)/gdt.o $(OBJDIR)/tss.o $(OBJDIR)/idt.o $(OBJDIR)/pic.o $(OBJDIR)/timer.o $(OBJDIR)/keyboard.o $(OBJDIR)/input.o $(OBJDIR)/shell.o $(OBJDIR)/string.o $(OBJDIR)/task.o $(OBJDIR)/vmm.o $(OBJDIR)/percpu.o $(OBJDIR)/syscall.o $(OBJDIR)/syscall_entry.o $(OBJDIR)/hello_blob.o $(OBJDIR)/process.o -o $(BINDIR)/kernel.elf && \
+	$(KERNEL_LD) $(KERNEL_LDFLAGS) $(OBJDIR)/boot.o $(OBJDIR)/isr.o $(OBJDIR)/kernel.o $(OBJDIR)/font8x8_basic.o $(OBJDIR)/serial.o $(OBJDIR)/klog.o $(OBJDIR)/panic.o $(OBJDIR)/kmalloc.o $(OBJDIR)/acpi.o $(OBJDIR)/irq.o $(OBJDIR)/apic.o $(OBJDIR)/rtc.o $(OBJDIR)/pmm.o $(OBJDIR)/paging.o $(OBJDIR)/display.o $(OBJDIR)/gdt.o $(OBJDIR)/tss.o $(OBJDIR)/idt.o $(OBJDIR)/pic.o $(OBJDIR)/timer.o $(OBJDIR)/keyboard.o $(OBJDIR)/shell.o $(OBJDIR)/string.o $(OBJDIR)/task.o $(OBJDIR)/vmm.o $(OBJDIR)/percpu.o $(OBJDIR)/syscall.o $(OBJDIR)/hello_blob.o $(OBJDIR)/burn_blob.o $(OBJDIR)/process.o -o $(BINDIR)/kernel.elf && \
 	mkdir -p ./target && \
 	cp $(BINDIR)/kernel.elf target/kernel.elf
 
@@ -69,8 +69,15 @@ hello.elf: user/hello.c user/user.ld
 	$(USER_CC) $(USER_CFLAGS) -T user/user.ld \
 		-e _start -o user/hello.elf user/hello.c
 
+burn.elf: user/burn.c user/user.ld
+	$(USER_CC) $(USER_CFLAGS) -T user/user.ld \
+		-e _start -o user/burn.elf user/burn.c
+
 hello.bin: user/hello.elf
 	x86_64-linux-gnu-objcopy -O binary user/hello.elf user/hello.bin
+
+burn.bin: user/burn.elf
+	x86_64-linux-gnu-objcopy -O binary user/burn.elf user/burn.bin
 
 # hello_blob.o: user/hello.bin
 # 	x86_64-linux-gnu-objcopy \
@@ -80,6 +87,11 @@ hello_blob.o: user/hello.elf
 	x86_64-linux-gnu-objcopy \
 		-I binary -O elf64-x86-64 -B i386:x86-64 \
 		user/hello.elf $(OBJDIR)/hello_blob.o
+
+burn_blob.o: user/burn.elf
+	x86_64-linux-gnu-objcopy \
+		-I binary -O elf64-x86-64 -B i386:x86-64 \
+		user/burn.elf $(OBJDIR)/burn_blob.o
 # hello_blob.o: user/hello.elf
 # 	x86_64-linux-gnu-objcopy \
 # 		-I binary -O elf64-x86-64 -B i386:x86-64 \
